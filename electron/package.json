@@ -1,0 +1,71 @@
+{
+  "name": "career-nova-electron",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Career Nova desktop shell (Electron)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "pack:dir": "electron-builder --dir",
+    "verify:kill": "node scripts/kill-verify.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-builder": "^25.0.0",
+    "vitest": "^5.0.0"
+  },
+  "build": {
+    "appId": "com.careernova.app",
+    "productName": "Career Nova",
+    "icon": "assets/icon.png",
+    "directories": {
+      "output": "../dist/installer"
+    },
+    "asar": true,
+    "forceCodeSigning": false,
+    "files": [
+      "main.js",
+      "config.js",
+      "preload.js",
+      "settings-store.js",
+      "utils/**/*",
+      "services/**/*",
+      "windows/**/*",
+      "tray/**/*",
+      "splash/**/*",
+      "assets/**/*",
+      "!**/*.test.*",
+      "!**/__tests__/**",
+      "!vitest.config.mjs"
+    ],
+    "extraResources": [
+      {
+        "from": "../dist/backend",
+        "to": "backend"
+      },
+      {
+        "from": "../dist/frontend",
+        "to": "frontend/dist"
+      }
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "signtoolOptions": {
+        "sign": "./build-noop-sign.cjs"
+      }
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Career Nova"
+    },
+    "portable": {}
+  }
+}

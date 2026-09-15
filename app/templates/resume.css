@@ -1,0 +1,412 @@
+@charset "UTF-8";
+/* 简历固定模板 CSS（app/templates/resume.css）
+ * 2026-08-28 排版转向（docs/adr/0004）：LLM 退出排版，固定模板确定性渲染。
+ * 忠实复刻参考项目 resume-builder 的两栏版式（渐变 header + 左主栏/右栏），
+ * 适配 A4 纸宽 + 系统字体栈（本地优先，不引外部字体）。
+ *
+ * 排版自由度四变量（2026-09-02 grill，全部由模板 :root 注入，落库随版本走、进导出）：
+ * - --scale  字号倍率：乘所有 font-size（calc(Npx * var(--scale))）。
+ * - --lh     行距倍率：乘 line-height 的 em 基准（calc(Nem * var(--lh))）。
+ * - --spacing 段距倍率：乘块间 margin 的 px 阶梯（calc(Npx * var(--spacing))）。
+ * - --ls     字间距（绝对 px，加性）：letter-spacing: calc(0px + var(--ls))，全局叠加。
+ */
+* {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 100%;
+}
+
+ul, li {
+  margin: 0;
+  padding: 0;
+}
+
+span, q {
+  display: block;
+}
+
+p {
+  margin: 0;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+@media not print {
+  body {
+    background-color: #ffffff;
+  }
+}
+@media print {
+  body {
+    background-color: #ffffff;
+  }
+}
+@page {
+  size: A4;
+  width: 100%;
+  margin: 0;
+}
+
+a {
+  color: #222222;
+  font-weight: inherit;
+  text-decoration: none;
+}
+a[href] {
+  text-decoration: underline;
+  text-decoration-color: #888888;
+}
+
+p, q {
+  line-height: calc(1.25em * var(--lh, 1));
+}
+
+li {
+  line-height: calc(1.35em * var(--lh, 1));
+}
+li:first-child {
+  margin-top: 0;
+}
+
+.content {
+  width: 210mm;
+  box-sizing: border-box;
+  height: auto;
+  padding-top: 20px;
+  margin: 0 auto;
+  font-family: system-ui, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  color: #222222;
+  letter-spacing: calc(0px + var(--ls, 0px)); /* 字间距（2026-09-02 排版自由度）：全局叠加 --ls，默认 0 */
+  background: linear-gradient(135deg, #8daebd 0%, rgba(141, 174, 189, 0.8549019608) 1%, #b9ceda 8%, #d8e6ee 30%, #ffffff 50%);
+  box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+  position: relative;
+}
+
+/* 通用 table 样式（左主栏 / 右栏）。主两栏（.content > .table）实际被下方 flex 覆写，这里留作
+   其它区块（basics 头、条目 header 行等）共享的基础样式——它们仍走 display:table。 */
+.table {
+  width: 100%;
+  display: table;
+  background-color: transparent;
+}
+.table .main {
+  display: table-cell;
+  width: 70%;
+  background-color: transparent;
+}
+.table .side {
+  display: table-cell;
+  width: 30%;
+  text-align: right;
+  background-color: transparent;
+}
+
+/* 主两栏（2026-09-02 重排：table → flex）。原 70%/30% 定宽 + 5px/50px padding 硬撑缝隙的写法
+   把「栏宽」和「栏距」搅在一起、且缝隙写死不可调。改为「左栏靠左弹性吃主区、右栏靠右定宽、
+   中间缝隙由 column-gap 单值控制」——栏距提成排版参数 --gutter（默认 55px = 原 5+50）。
+   用 .content > .table 子选择器覆写，只命中主两栏，不动共享 .table 的其它区块。 */
+.content > .table {
+  display: flex;
+  justify-content: space-between; /* 左靠左、右靠右，缝隙在中间 */
+  column-gap: var(--gutter, 55px); /* 栏距（排版参数，可调） */
+  padding: 0px 50px 50px 50px;
+  margin-top: -10px;
+}
+.content > .table > .main {
+  display: block;
+  flex: 1 1 0;
+  min-width: 0; /* flex 子项内容可换行收缩，不撑破 */
+  width: auto; /* 取消通用 .table 的 70% 定宽 */
+  background-color: transparent;
+}
+.content > .table > .side {
+  display: block;
+  flex: 0 0 28%; /* 右栏定宽 28%（≈原 30% 去掉 padding 后的内容宽），贴右缘 */
+  width: auto;
+  text-align: right; /* 右栏内容右对齐（用户定：保持右对齐） */
+  background-color: transparent;
+}
+
+.basics {
+  background: transparent;
+  padding: 35px 50px 20px 50px;
+  width: 100%;
+}
+.basics .table {
+  background-color: transparent;
+  display: table;
+}
+.basics .table .main, .basics .table .side {
+  display: table-cell;
+  background-color: transparent;
+}
+.basics .summary {
+  background-color: transparent;
+  padding: 5px;
+}
+
+.summary {
+  font-size: calc(15px * var(--scale, 1));
+}
+.summary:empty {
+  display: none;
+}
+
+.section-title {
+  font-size: calc(26px * var(--scale, 1));
+  font-weight: normal;
+  /* 标题下边距跟行距倍率 --lh 走（2026-09-02 反馈）：行距拉开时标题与其内容同比例呼吸，
+     不再写死 15px 导致行距调大后标题与正文节奏脱节。 */
+  margin: 0 0 calc(15px * var(--lh, 1)) 0;
+}
+/* 标题文字本体行高固定 1.2（2026-09-02）：h2 等标题元素自带 UA line-height，又叠模板
+   p,q/li 的 calc(em*--lh) 会重复放大。标题是单行短文本，行高与行距旋钮解耦，避免调行距
+   时标题块高度被双重放大撑爆。 */
+p.section-title {
+  line-height: 1.2;
+}
+
+.contact li {
+  display: flex;
+  align-items: center;
+}
+
+.contact-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.icon-left {
+  display: flex;
+  transform: translateX(5px);
+}
+
+.text-right {
+  text-align: right;
+  flex: 1;
+}
+
+.icon-muted {
+  color: #000000;
+  opacity: 0.7;
+}
+
+.margin-container-2:not(:first-child) {
+  margin-top: calc(15px * var(--spacing, 1));
+}
+
+.margin-container-3:not(:first-child) {
+  margin-top: calc(15px * var(--spacing, 1));
+}
+
+.margin-container-4:not(:first-child) {
+  margin-top: calc(35px * var(--spacing, 1));
+}
+
+.padding-container-2 {
+  padding: 15px 0;
+}
+
+.padding-top-container-2 {
+  padding-top: 15px;
+}
+
+.padding-bottom-container-2 {
+  padding-bottom: 15px;
+}
+
+.margin-text-1 {
+  margin-top: calc(2px * var(--spacing, 1));
+}
+.margin-text-1:empty {
+  display: none;
+}
+
+.margin-text-2 {
+  margin-top: calc(4px * var(--spacing, 1));
+}
+.margin-text-2:empty {
+  display: none;
+}
+
+.margin-text-3 {
+  margin-top: calc(6px * var(--spacing, 1));
+}
+.margin-text-3:empty {
+  display: none;
+}
+
+.margin-text-4 {
+  margin-top: calc(8px * var(--spacing, 1));
+}
+.margin-text-4:empty {
+  display: none;
+}
+
+.margin-text-5 {
+  margin-top: calc(14px * var(--spacing, 1));
+}
+.margin-text-5:empty {
+  display: none;
+}
+
+.no-break {
+  break-inside: avoid;
+}
+
+.no-alone-1 {
+  break-inside: avoid;
+}
+.no-alone-1::after {
+  content: "";
+  display: block;
+  height: 75px;
+  margin-bottom: -75px;
+}
+
+.no-alone-2 {
+  break-inside: avoid;
+}
+.no-alone-2::after {
+  content: "";
+  display: block;
+  height: 150px;
+  margin-bottom: -150px;
+}
+
+.main .highlights {
+  width: auto;
+  display: block;
+  padding: 0 10px;
+  margin-bottom: 0;
+  columns: 2;
+  column-width: 310px;
+  column-gap: 10px;
+}
+.main .highlights li {
+  font-size: calc(18px * var(--scale, 1));
+  list-style: none;
+}
+.main .highlights li:before {
+  content: "· ";
+  vertical-align: middle;
+}
+.main .left {
+  display: table-cell;
+}
+.main .left .title {
+  font-size: calc(20px * var(--scale, 1));
+  font-weight: bold;
+  display: block;
+}
+.main .left .subtitle {
+  font-size: calc(20px * var(--scale, 1));
+  font-weight: 300;
+  display: block;
+}
+.main .right {
+  text-align: right;
+  display: table-cell;
+}
+.main .right .date {
+  font-size: calc(18px * var(--scale, 1));
+  font-weight: 300;
+  white-space: nowrap;
+}
+
+.basics .main {
+  vertical-align: middle;
+}
+.basics .main .name {
+  font-size: calc(52px * var(--scale, 1));
+  line-height: 1em;
+  font-weight: bold;
+  display: block;
+  margin-left: -0.88px;
+}
+.basics .main .label {
+  font-size: calc(22px * var(--scale, 1));
+  line-height: 1.2em;
+  font-weight: 300;
+  display: block;
+  margin-left: -0.88px;
+  margin-top: 30px;
+}
+.basics .side {
+  vertical-align: middle;
+  padding-top: 15px;
+}
+.basics .side .contact {
+  list-style-type: none;
+}
+.basics .side .contact li {
+  font-size: calc(18px * var(--scale, 1));
+  line-height: calc(1.6em * var(--lh, 1));
+}
+.basics .side .contact-highlight {
+  text-decoration: underline;
+  font-weight: bold;
+}
+
+.education .title {
+  font-size: calc(20px * var(--scale, 1));
+}
+.education .institution {
+  font-size: calc(18px * var(--scale, 1));
+  font-weight: 300;
+}
+
+.certificates .name {
+  font-size: calc(20px * var(--scale, 1));
+}
+.certificates .issuer {
+  font-size: calc(18px * var(--scale, 1));
+  font-weight: 300;
+}
+
+.skills .section-title {
+  margin-bottom: -5px;
+}
+.skills .container {
+  display: block;
+  columns: 2;
+  column-gap: 10px;
+}
+.skills .container .article {
+  break-inside: avoid-column;
+  min-width: 120px;
+  padding-top: 15px;
+}
+.skills .container .article span {
+  display: block;
+  font-size: calc(20px * var(--scale, 1));
+}
+.skills .container .article li {
+  font-size: calc(18px * var(--scale, 1));
+  font-weight: 300;
+  list-style: none;
+}
+
+.languages ul {
+  list-style: none;
+}
+.languages ul li {
+  font-size: calc(14px * var(--scale, 1));
+}
+
+.interests ul {
+  list-style: none;
+}
+.interests ul li {
+  font-size: calc(14px * var(--scale, 1));
+}

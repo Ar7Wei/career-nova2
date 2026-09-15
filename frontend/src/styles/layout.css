@@ -1,0 +1,249 @@
+/* ---------------------------------------------------------------------------
+   布局骨架：TitleBar / Sidebar / StatusBar / 整窗网格
+   --------------------------------------------------------------------------- */
+.app-shell {
+  display: grid;
+  grid-template-rows: var(--spacing-titlebar) 1fr var(--spacing-statusbar);
+  height: 100vh;
+}
+
+.app-body {
+  display: grid;
+  grid-template-columns: var(--spacing-sidebar) 1fr;
+  min-height: 0;
+  transition: grid-template-columns 0.25s var(--ease-out);
+}
+.app-body.sidebar-collapsed {
+  grid-template-columns: var(--spacing-sidebar-collapsed) 1fr;
+}
+
+.app-main {
+  overflow-y: auto;
+  padding: var(--space-5);
+  min-width: 0;
+}
+
+/* 「LLM key 未配置」顶部横幅（ADR 0021：只做提示不强制向导）。
+   warning 状态底色 + 细边，不用玻璃（玻璃留给弹层/提示浮起件，横幅是内嵌在主区
+   顶部的常驻条，毛玻璃在这里没有叠层意义）。 */
+.llm-key-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-4);
+  background: var(--color-warning-soft);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius);
+  color: var(--color-ink);
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-normal);
+}
+.llm-key-banner-icon {
+  flex: none;
+  color: var(--color-warning);
+}
+.llm-key-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+/* 「去配置」用主色文字钮，弱化但仍可点；关闭钮贴右端。 */
+.llm-key-banner-action {
+  flex: none;
+  color: var(--color-primary-active);
+  font-weight: var(--font-weight-medium);
+}
+.llm-key-banner-close {
+  flex: none;
+  color: var(--color-muted);
+}
+
+/* TitleBar（自绘，可拖动） */
+.titlebar {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  background: var(--color-panel);
+  border-bottom: 1px solid var(--color-border-light);
+  user-select: none;
+}
+.titlebar-drag {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--space-3);
+  -webkit-app-region: drag;
+}
+.titlebar-logo {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+.titlebar-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: -0.01em;
+}
+.titlebar-controls {
+  display: flex;
+}
+/* Mantine Button：窗口控制钮是无文字图标钮，保留 Mantine 的盒模型，只补两件
+   CSS 管不了的事——拖拽区豁免（app-region 在 .tb-btn 上，Mantine 不接管）与
+   关闭钮的整块红（Mantine 无「hover 才出现色块」的现成语义）。
+   宽度用 aspect-ratio 撑方：Mantine 的 hover 背景是内部 span，按高度撑满才不露白边。 */
+.titlebar-controls .tb-btn {
+  -webkit-app-region: no-drag;
+  /* Mantine 把高度写成内联 --button-height，只能 !important 夺回；宽高都撑满 TitleBar 高。 */
+  --button-height: 100% !important;
+  --button-padding-x: 12px;
+  height: var(--spacing-titlebar);
+  width: var(--spacing-titlebar);
+  padding: 0;
+  color: var(--color-muted);
+}
+.titlebar-controls .tb-btn:hover {
+  background: var(--color-soft);
+  color: var(--color-ink);
+}
+.titlebar-controls .tb-close:hover {
+  background: var(--color-error);
+  color: var(--color-on-primary);
+}
+.titlebar-controls .tb-btn:hover {
+  background: var(--color-soft);
+  color: var(--color-ink);
+}
+.titlebar-controls .tb-close:hover {
+  background: var(--color-error);
+  color: var(--color-on-primary);
+}
+
+/* Sidebar（主导航在上，设置沉底） */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background: var(--color-panel);
+  border-right: 1px solid var(--color-border-light);
+  padding: var(--space-3) var(--space-3);
+  min-height: 0;
+}
+.sidebar-main,
+.sidebar-system {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  /* 固定高度：展开时 item 由文字行高(~20px)撑到 36~37px，收起时只剩图标 18px →
+     高度差 2~3px 导致图标位置整体位移。统一 38px 让展开/收起高度恒定、图标中心不动。 */
+  height: 38px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius);
+  font-size: var(--font-size-md); /* 2026-08-23：导航 14px 档，加粗，比区段标题(15px)低一档 */
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.1em; /* 2026-09-16：导航文字加宽字距，四个字读起来更透气 */
+  color: var(--color-muted);
+  text-decoration: none;
+}
+.nav-item:hover {
+  background: var(--color-soft);
+  color: var(--color-ink);
+}
+.nav-item.active {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-active);
+}
+.nav-icon {
+  flex: none;
+}
+
+/* 收起态：整列只显示图标（导航居中），隐藏文字。折叠开关已移到底部状态栏。 */
+.sidebar.collapsed {
+  padding: var(--space-3) var(--space-2);
+}
+.sidebar.collapsed .nav-item {
+  justify-content: center;
+  padding: 0; /* 高度仍由 height:38px 固定，展开/收起等高，图标中心不动 */
+}
+
+/* StatusBar（底部固定条）：左列（折叠开关 + 连接状态，与侧栏同宽、随侧栏收起变窄）+ 右「LLM 模型」 */
+.statusbar {
+  display: grid;
+  grid-template-columns: var(--spacing-sidebar) 1fr;
+  background: var(--color-panel);
+  border-top: 1px solid var(--color-border-light);
+  font-size: var(--font-size-lg);
+  transition: grid-template-columns 0.25s var(--ease-out);
+}
+.statusbar.sidebar-collapsed {
+  grid-template-columns: var(--spacing-sidebar-collapsed) 1fr;
+}
+.statusbar-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  min-width: 0;
+  border-right: 1px solid var(--color-border-light); /* 与上轮廓线同色同粗，对齐侧栏右缘 */
+  background: var(--color-soft); /* 常显高亮，不做 hover 变化 */
+}
+.statusbar.sidebar-collapsed .statusbar-left {
+  justify-content: center;
+  padding: 0;
+}
+/* 收起时只留图标：隐藏开关文字 */
+.statusbar.sidebar-collapsed .statusbar-toggle-label {
+  display: none;
+}
+/* 折叠开关（2026-08-23 移入状态栏）：Mantine subtle 钮，这里只覆盖
+   状态栏特有的行高与「整列常显高亮、无 hover 底色」两处。 */
+.statusbar-toggle {
+  --button-height: auto !important;
+  gap: var(--space-2);
+  padding: 2px var(--space-2);
+  line-height: var(--line-height-normal);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink); /* 常显主文字色，不做 hover 变化 */
+}
+.statusbar-toggle:hover {
+  background: transparent;
+}
+.statusbar-toggle svg {
+  flex: none;
+}
+.statusbar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+}
+.status-dot {
+  flex: none;
+}
+.statusbar-text {
+  color: var(--color-muted);
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-normal);
+  font-weight: var(--font-weight-medium);
+}
+/* LLM 模型（可点击 → 跳设置页模型区）：Mantine subtle 钮，只覆盖等宽字体与淡落款色；
+   margin-left:auto 把状态文字留在左侧、模型顶到整列右端。无 hover 底色。 */
+.statusbar-model {
+  --button-height: auto !important;
+  margin-left: auto;
+  padding: 2px var(--space-1);
+  color: var(--color-placeholder);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-normal);
+}
+.statusbar-model:hover {
+  background: transparent;
+}
+

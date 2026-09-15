@@ -1,0 +1,212 @@
+/* ===========================================================================
+   Career Nova — 设计 token（借鉴 AlgerMusicPlayer，单主题 light）
+   主色绿 #22c55e + light 灰阶；玻璃拟态弹层；柔和圆角阴影。
+   颜色一律走 CSS 变量（供自绘 CSS 与内联 var() 使用）。
+   2026-08：Mantine 接入后，组件主题见 src/theme/alger.ts（本文件只供自绘部分）。
+   =========================================================================== */
+:root {
+  /* 主色：Alger 绿 */
+  --color-primary: #22c55e;
+  --color-primary-hover: #16a34a;
+  --color-primary-active: #15803d;
+  --color-primary-soft: rgba(34, 197, 94, 0.12); /* 12% 主色底，选中/徽标 */
+
+  /* light 灰阶（Alger） */
+  --color-canvas: #f1f3f5;   /* 应用底色（2026-08-18 批次 3：#f8f9fa 压暗至此，拉大与白面板明度差，Linear 路线面板无投影也立得住） */
+  --color-panel: #ffffff;    /* 卡片/面板 */
+  --color-soft: #e9ecef;     /* 次级面、hover */
+  --color-border: #dee2e6;   /* 边 */
+  --color-border-light: #eef1f3;
+
+  /* 文字 */
+  --color-ink: #212529;      /* 主文字 */
+  --color-muted: #6c757d;    /* 次文字 */
+  --color-placeholder: #adb5bd;
+
+  /* 状态（12~18% 透明底色 + 实色文字） */
+  --color-success: #22c55e;
+  --color-success-soft: rgba(34, 197, 94, 0.12);
+  --color-error: #ef4444;
+  --color-error-soft: rgba(239, 68, 68, 0.12);
+  --color-warning: #f59e0b;
+  --color-warning-soft: rgba(245, 158, 11, 0.14);
+  --color-info: #3b82f6;
+  --color-info-soft: rgba(59, 130, 246, 0.12);
+
+  /* 施工牌（未开发模块占位）：橙底 + 斜纹。条纹用灰半透明而非黑——牌面文字是深色，
+     黑条会跟文字抢明度、把 12px 小字读糊；灰叠在橙底上自然压暗，出纹理不吃字。 */
+  --color-sign-bg: #f9d67a;
+  --color-sign-stripe: rgba(120, 113, 108, 0.16);
+
+  /* 深色蒙层上的白底浮起钮（岗位行 hover 蒙层 / 面试格内蒙层共用一套，2026-09-11 C2 收敛）。
+     蒙层是深色半透明 scrim，浮在上面的钮必须走高对比白，不能吃 --color-panel（会与蒙层同色）。 */
+  --overlay-scrim: rgba(15, 23, 42, 0.42);
+  --overlay-btn-bg: rgba(255, 255, 255, 0.9);
+  --overlay-btn-bg-hover: var(--color-panel);
+
+  /* 主色/错误色实底上的前景（白字白图标）。语义命名，值同 --color-panel。 */
+  --color-on-primary: var(--color-panel);
+
+  /* 圆角（柔和） */
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+
+  /* 阴影（柔和） */
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.08);
+  --shadow-pop: 0 8px 30px rgba(16, 24, 40, 0.12);
+  --shadow-input: inset 0 0 0 1px var(--color-border);
+
+  /* 玻璃拟态底（blur 也收成变量：特化几何的浮层可复用三件套而不抄 blur 字面值） */
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.6);
+  --glass-blur: blur(16px) saturate(1.8);
+
+  /* 字体 */
+  --font-sans: system-ui, -apple-system, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Consolas, monospace;
+  /* ⚠️ --font-sans 与 src/theme/alger.ts 的 fontFamily 同源：改字体必须两处一起改 */
+
+  /* 字号（6 档：2026-08-18 批次 3 加 title 档；2026-08-23 加 md 档——导航专用，
+     比 title(15px 区段标题) 低一档，保持「导航 < 内容区段」层级） */
+  --font-size-xs: 11px;    /* 最小标签/徽标/计数 */
+  --font-size-sm: 12px;    /* 辅助/提示/次要文字 */
+  --font-size-lg: 13.5px;  /* 正文/控件 */
+  --font-size-md: 14px;    /* 一级/二级导航项（加粗），比区段标题低一档 */
+  --font-size-title: 15px; /* 区段/卡片标题（settings-group h2/panel-title/card h2 等；字重 600） */
+  --font-size-heading: 22px; /* 页头 h1/卡片主标题 */
+
+  /* 字重 */
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* 行高 */
+  --line-height-tight: 1.4;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.6;
+  --line-height-loose: 1.7;
+
+  /* 布局尺寸 */
+  --spacing-sidebar: 200px;
+  --spacing-sidebar-collapsed: 56px;
+  --spacing-subnav: 140px; /* 页面内二级导航宽度（投递/设置两页共用） */
+  --spacing-titlebar: 40px;
+  --spacing-statusbar: 34px;
+
+  /* 间距 scale（5 档，数据高频值收敛；与布局 --spacing-* 语义隔离） */
+  --space-1: 0.25rem;  /* 最小间隙（原 0.2/0.25/0.3/0.35rem + 2/4/5px） */
+  --space-2: 0.5rem;   /* 常规（原 0.4/0.45/0.5rem + 6/8px） */
+  --space-3: 0.75rem;  /* 区块（原 0.6/0.7/0.75/0.9rem） */
+  --space-4: 1rem;     /* 卡片内（原 1/1.25rem） */
+  --space-5: 1.5rem;   /* 区块间/大间隔（原 1.5/1.75/2/3rem） */
+  --space-6: 2rem;     /* 超宽槽位间距（面试日历翻月组 120px 命名档，2026-09-11 C3 加） */
+
+  /* 动效 */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ---------------------------------------------------------------------------
+   全局 reset + body
+   --------------------------------------------------------------------------- */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden; /* 桌面壳：整窗不滚，主区内容自滚 */
+}
+
+/* ---------------------------------------------------------------------------
+   全局窄滚动条（2026-08-13 复用建议面板样式到全系统）
+   - 6px 圆角半透明；thumb 默认透明（隐藏），任意滚动元素 hover 时淡入 6px 细条，
+     hover 滚动条本身加深——统一、干净、有位置指示。
+   - 覆盖所有滚动容器（主区/左栏/预览/面板/抽取卡/资料集/建议面板 + Mantine 控件）。
+   - 聊天区 .chat-messages 刻意隐藏（保留可滚动）：其 ::-webkit-scrollbar
+     display:none + width:0 特异性更高，覆盖本全局规则——不在此排除。
+   - Firefox 兜底：thin + 半透明 thumb。
+   --------------------------------------------------------------------------- */
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+*:hover::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.18);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.32);
+}
+/* Firefox 兜底：所有可滚动元素统一 thin + 半透明 thumb（hover 显隐 Firefox 无伪元素，
+   直接用半透明常驻——细条占位小，不影响视觉） */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(15, 23, 42, 0.18) transparent;
+}
+
+/* 图标-only 按钮（Mantine default 变体，恢复原 .chat-icon-btn 方块视觉）：
+   default 原生白底+灰边；此层只补方形尺寸。
+   2026-08-24：36→30，与主题层 --button-height 30px 同档（base.css 后于 Mantine styles 引入，
+   此 class 的 height 会盖过主题变量，必须同步改，否则图标钮仍是 36px）。 */
+.btn-icon {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  flex: none;
+}
+/* compact-sm 图标钮：20px 方块（卡片/面板内动作，2026-08-24 定：比 26px 再降一档，
+   配 12px 正文的紧凑语境），盖掉上面的 30px。
+   2026-08-24 修：Mantine v9 不给 size 语义类（尺寸在 hash 类里），
+   .mantine-Button-compact-sm 选择器永远匹配不到——改显式 .btn-icon-sm 由组件传入。 */
+.btn-icon-sm {
+  width: 20px;
+  height: 20px;
+}
+
+/* 统一过渡曲线（2026-08-18 批次 3：去掉 .card——卡片瞬时响应，不做 all 过渡，
+   否则尺寸/位置变化拖出"蠕动"动画；只交互元素有 hover 过渡） */
+button,
+a,
+input,
+select {
+  transition: all 0.2s var(--ease-out);
+}
+
+/* 局部渲染错误兜底（PanelErrorBoundary，2026-09-09）：面板崩了只降级该面板，不整页白屏。
+   状态底色 12% 透明（--color-error-soft）+ 错误红文字，与项目「状态用 12~18% 透明底色」一致。 */
+.panel-error-boundary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--color-error-soft);
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius);
+}
+.panel-error-boundary-text {
+  font-size: var(--font-size-sm);
+  color: var(--color-error);
+}

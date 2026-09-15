@@ -1,0 +1,287 @@
+/* ---------------------------------------------------------------------------
+   组件原语（按 Alger 重做：柔和圆角/阴影、绿主色、玻璃拟态弹层）
+   --------------------------------------------------------------------------- */
+
+/* 卡片 */
+.card {
+  background: var(--color-panel);
+  border: 1px solid var(--color-border); /* 2026-08-18 批次 3：border-light→border，面板从画布立起来（Linear 路线） */
+  border-radius: var(--radius-lg);
+  /* 2026-08-18 批次 3：去 box-shadow——Linear 路线卡片不加投影，投影只留 .glass 弹层 */
+  padding: var(--space-4)
+}
+.card h2 {
+  font-size: var(--font-size-heading);
+  font-weight: var(--font-weight-semibold);
+  margin-bottom: var(--space-2)
+}
+.card p {
+  font-size: var(--font-size-lg);
+  color: var(--color-muted);
+}
+
+/* 表单 */
+input,
+select,
+textarea {
+  width: 100%;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-lg);
+  font-family: inherit;
+  color: var(--color-ink);
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-placeholder);
+}
+textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+label {
+  display: block;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+  margin-bottom: var(--space-1)
+}
+
+/* Chip 徽标 */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-3);
+  border-radius: 9999px;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+.chip-green {
+  background: var(--color-success-soft);
+  color: var(--color-primary-active);
+}
+.chip-red {
+  background: var(--color-error-soft);
+  color: var(--color-error);
+}
+.chip-gray {
+  background: var(--color-soft);
+  color: var(--color-muted);
+}
+.chip-blue {
+  background: var(--color-info-soft);
+  color: var(--color-info);
+}
+
+/* 数字等宽（2026-08-18 批次 3 §9.3 tabular-nums）：
+   只给数字密集处——计数徽标/角标/端口输入框；纵向对齐看数字不跳。正文不开。 */
+.facts-panel-count,
+.suggestion-col-count,
+.tool-tab-count,
+.tool-tab-badge,
+.port-input {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 表格 */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-lg);
+}
+th {
+  text-align: left;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-muted);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--font-size-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+td {
+  padding: var(--space-3) var(--space-3);
+  border-bottom: 1px solid var(--color-border-light);
+}
+tr:hover td {
+  background: var(--color-canvas);
+}
+
+/* 状态点 + 状态条 */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.status-dot.green {
+  background: var(--color-success);
+}
+.status-dot.gray {
+  background: var(--color-placeholder);
+}
+.status-dot.red {
+  background: var(--color-error);
+}
+
+/* 空态 */
+.empty-state {
+  text-align: center;
+  padding: var(--space-5) var(--space-3);
+  color: var(--color-placeholder);
+}
+.empty-state h3 {
+  font-size: var(--font-size-lg);
+  color: var(--color-muted);
+  margin-bottom: var(--space-1)
+}
+.empty-state p {
+  font-size: var(--font-size-lg);
+  max-width: 320px;
+  margin: var(--space-2) auto
+}
+
+/* 页面外壳：撑满主区可视高度，把「未开发」卡片顶到填满整屏（否则卡片只有一行高）。
+   高度算式**照抄 .resume-layout**（同款 calc）——app-main 是 overflow:auto 的滚动容器，
+   子元素 `height:100%` 不可靠（100% 解析的是滚动内容盒），故沿用已验证的算式。
+   只给 ComingSoon 用，不动其它页面的块流布局。 */
+.coming-soon-page {
+  height: calc(100vh - var(--spacing-titlebar) - var(--spacing-statusbar) - (2 * var(--space-5)));
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   未开发模块占位（Chatter / Growth，2026-09-16 开源首版）：
+   标签保留、页面挡一层。刻意做成「按不动」——整块铺满主区余高（calc 同 .resume-layout）、
+   淡灰底、虚线边、无按钮，跟业务空态（实线白卡 + 有动作）拉开差距。灰底用 --color-soft
+   而非 --color-canvas：后者与应用底色同值，整块会融进背景看不出范围。
+   --------------------------------------------------------------------------- */
+.coming-soon-card {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5) var(--space-3);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-soft);
+  color: var(--color-placeholder);
+}
+
+/* 施工牌：橙底 + 45° 斜纹，**只包住标题这一行**（说明文字排在牌下方，不上橙底）。
+   条纹与底色写在**同一个 background 简写**里（自上而下分层绘制），文字直接压在条纹上
+   ——不用伪元素铺底，避开 ::before 与内容的层叠上下文纠缠。
+   灰半透明条纹（--color-sign-stripe）比黑更合适：牌面文字是深色，黑条会跟文字抢明度，
+   12px 小字会被读糊；灰条叠在橙底上自然压暗，出纹理但不吃字。
+   圆角走 --radius-sm：施工牌要比外层虚线卡更「硬」，大圆角会显得像气泡。 */
+.construction-sign {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--color-sign-stripe) 0 12px,
+    transparent 12px 24px
+  ),
+    var(--color-sign-bg);
+  color: #442a00; /* 深琥珀：橙底上的正文色，var() 里没有这档深色，就近取深棕 */
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* 牌下说明：留在灰底上，不跟标题一起上橙底（橙底是「施工牌」的符号，铺满会让说明也吃进
+   这个语义里，主次也糊）。文字色继承 .coming-soon-card 的 --color-placeholder，比牌面弱。 */
+.coming-soon-desc {
+  max-width: 320px;
+  margin-top: var(--space-3);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  text-align: center;
+}
+
+/* 玻璃拟态弹层（popover / tooltip / dialog） */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+}
+
+/* 页头（布局用：标题块与下方内容的间距）。标题/副标题视觉分别走 .page-title / .page-subtitle。 */
+.page-header {
+  margin-bottom: var(--space-5)
+}
+/* 页面标题统一规格（2026-08-24）：所有业务页标题同一 h1 基线。
+   2026-08-25：去掉标题旁 icon（只保留左侧导航栏 icon），h1 纯文字。
+   letter-spacing 0.01em——22px 大标题收紧显得挤，改微松。
+   简历/投递/设置/占位/Dev 全部套用。 */
+.page-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-heading);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.01em;
+  margin: 0;
+}
+/* 页头副标题：辅助文字 12px（与正文 13.5px 拉开层级），全局唯一规格。 */
+.page-subtitle {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  margin-top: var(--space-1);
+}
+/* 二级导航头部（左栏内标题+副标题）：投递/设置页共用；下方导航项间距。 */
+.subnav-head {
+  margin-bottom: var(--space-3);
+}
+
+/* ---------------------------------------------------------------------------
+   Dev 试衣间（/dev/components）：陈列用排版。dev-section 分组、dev-row 横排。
+   --------------------------------------------------------------------------- */
+.dev-section {
+  margin-bottom: var(--space-5);
+}
+.dev-section > h3 {
+  font-size: var(--font-size-title);
+  font-weight: var(--font-weight-semibold);
+  margin-bottom: var(--space-2);
+}
+.dev-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+/* 对比矩阵：每行一种用途语境，行首小标签 + 横排候选按钮 */
+.dev-matrix-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+.dev-matrix-row + .dev-matrix-row {
+  border-top: 1px solid var(--color-border-light);
+}
+.dev-matrix-label {
+  flex: none;
+  width: 130px;
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+

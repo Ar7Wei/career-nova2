@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<!-- 启动窗（splash）：独立透明窗口加载本文件（不走前端构建，样式独立内联）。
+     与前端 base.css / tray/menu.html 双轨同值：颜色/圆角/字号/缓动 token 手写一致，
+     改样式需两处一起改。透明窗做不出真 backdrop 毛玻璃，用「半透明白 + 细边 + 圆角 +
+     柔和投影」呈现玻璃质感（同 menu.html 思路）。进度条为不确定条（indeterminate）。 -->
+<style>
+  :root {
+    --color-canvas: #f1f3f5;
+    --color-panel: #ffffff;
+    --color-ink: #212529;
+    --color-muted: #6c757d;
+    --color-border: #dee2e6;
+    --color-primary: #22c55e;
+    --color-primary-soft: rgba(34, 197, 94, 0.12);
+    --color-soft: #e9ecef;
+    --radius-lg: 14px;
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    background: transparent;
+    height: 100%;
+    overflow: hidden;
+  }
+  body {
+    font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+  }
+  /* 卡片：半透明白 + 细边 + 圆角（玻璃感）。
+     不用 box-shadow：透明窗里投影会在圆角外留下生硬的尖角阴影残留（用户实测）。
+     靠「细边 + 圆角」立住卡片，与 tray/menu.html 一致（它就没用投影）。 */
+  .card {
+    width: 100%;
+    height: 100%;
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 28px 28px 24px;
+  }
+  .logo {
+    width: 56px;
+    height: 56px;
+    object-fit: contain;
+    /* 不加 drop-shadow：透明窗里投影会在边缘留生硬阴影残留（同卡片去投影的原因）。 */
+  }
+  .name {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--color-ink);
+    letter-spacing: 0.2px;
+  }
+  /* 阶段文案：次要文字色，固定高度避免切换文案时卡片跳动。
+     柔和交叉淡变：不硬切——下一句提前从透明 + 轻微下沉淡入浮起，与上一句淡出重叠，
+     无空白间隙。缓动 var(--ease-out)，时长略放缓让浮动感出来。 */
+  .status {
+    font-size: 12px;
+    color: var(--color-muted);
+    height: 18px;
+    line-height: 18px;
+    transition: opacity 0.42s var(--ease-out), transform 0.42s var(--ease-out);
+    will-change: opacity, transform;
+  }
+  /* 过渡起始态：透明 + 略微下沉；JS 加一个 rAF 后摘掉，元素缓到定态。 */
+  .status.swap {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  /* 不确定进度条轨道 */
+  .track {
+    width: 200px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--color-soft);
+    overflow: hidden;
+    position: relative;
+  }
+  /* 滑动的那段：主色绿，从左滑到右循环（indeterminate）。
+     用 transform 位移动画（compositor 线程，不卡 UI）。缓动与全局一致。 */
+  .bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 40%;
+    border-radius: 999px;
+    background: var(--color-primary);
+    animation: slide 1.15s var(--ease-out) infinite;
+  }
+  @keyframes slide {
+    0%   { transform: translateX(-110%); }
+    100% { transform: translateX(320%); }
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <img class="logo" src="../assets/icon.png" alt="Career Nova" />
+    <div class="name">Career Nova</div>
+    <div class="track"><div class="bar"></div></div>
+    <div class="status" id="status">正在启动…</div>
+  </div>
+</body>
+<script>
+  // 阶段文案 = 真事件（主进程经 splash.onStatus 推 key）。
+  //   launch / wait_backend：还属于「启动中」，固定文案一闪而过，随即开始氛围滚动填空。
+  //   finalize（即将就绪）：唯一要「停滚动、钉住显示」的真收尾文案——它一出就不再滚。
+  // 这样氛围文案不再只是启动早期一闪而过（之前 wait_backend 一到就停滚，而那几段最长，
+  // 导致用户只看到「等待后端/即将就绪」两句固定文案）。
+  const TEXT = {
+    launch: "正在启动本地服务…",
+    finalize: "即将就绪…",
+  };
+  // 钉住显示、停止滚动的事件（真收尾）。其余事件仅作启动信号、不阻断氛围滚动。
+  const PINNED = new Set(["finalize"]);
+  // 氛围文案池（随机滚动用）。改词只动这里。
+  const AMBIENT = [
+    "正在整理工作台…",
+    "正在装载简历数据…",
+    "正在唤醒本地服务…",
+    "正在铺开工位…",
+  ];
+  const ROTATE_MS = 800; // 轮换节奏（每 0.8s 换一句）
+
+  const el = document.getElementById("status");
+  let queue = []; // 本轮还没用过的氛围文案（不放回）
+  let rotateTimer = null;
+  let pinned = false; // 是否已收到收尾事件（finalize）——钉住后不再滚动
+
+  // 柔和交叉淡变：先置起始态（透明+下沉），立即换文字，再用双重 rAF 摘掉起始态——
+  // 新文字随 transition 平滑浮起到位，与下一句的淡出无缝重叠，无硬切、无空白。
+  function render(text) {
+    el.classList.add("swap");
+    el.textContent = text;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => el.classList.remove("swap"));
+    });
+  }
+
+  // 不放回随机取一句：取完一轮重新洗牌，保证同一轮内不重复、且不与上一句重复。
+  function nextAmbient() {
+    if (queue.length === 0) {
+      queue = AMBIENT.slice();
+      // 洗牌
+      for (let i = queue.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [queue[i], queue[j]] = [queue[j], queue[i]];
+      }
+    }
+    return queue.pop();
+  }
+
+  function startRotate() {
+    if (rotateTimer) return;
+    rotateTimer = setInterval(() => {
+      if (pinned) { stopRotate(); return; } // 收尾事件已钉住 → 停滚
+      render(nextAmbient());
+    }, ROTATE_MS);
+  }
+  function stopRotate() {
+    if (rotateTimer) { clearInterval(rotateTimer); rotateTimer = null; }
+  }
+
+  // 主进程事件：finalize 钉住显示；其余（launch/wait_backend）只是启动信号，不打断滚动。
+  function onEvent(key) {
+    if (PINNED.has(key)) {
+      pinned = true;
+      stopRotate();
+      render(TEXT[key] || key);
+    }
+  }
+
+  render(TEXT.launch); // 先落一句启动中文案
+  startRotate();       // 开始氛围滚动（直到 finalize 钉住）
+  if (window.splash && window.splash.onStatus) {
+    window.splash.onStatus(onEvent);
+  }
+</script>
+</html>

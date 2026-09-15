@@ -1,0 +1,1345 @@
+/* ===========================================================================
+   投递页（阶段二 · 岗位聚合）——左侧二级导航 + 右侧视图
+   复用全局 design token（index.css :root）；只写投递页专有样式。
+   =========================================================================== */
+
+.apply-layout {
+  height: 100%;
+  display: grid;
+  grid-template-columns: var(--spacing-subnav) 1fr;
+  gap: var(--space-5);
+  align-items: start;
+  min-height: 0;
+}
+
+/* ---- 左侧二级导航（借设置页 settings-nav 视觉，交互 = 互斥视图切换） ---- */
+.apply-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  /* 填满左栏高度（父 .apply-layout 是 align-items:start，这里 override），
+     让「不再追踪」能用 margin-top:auto 沉底靠下。 */
+  align-self: stretch;
+  position: sticky;
+  top: 0;
+}
+/* 标题+副标题走全站 .page-title / .subnav-head / .page-subtitle 原语（与设置页同源） */
+/* Mantine subtle 钮：整宽左对齐的一栏式导航项（同 .settings-nav-item 形态），
+   激活态盖过主题 hover 底色。 */
+.apply-nav-item {
+  --button-height: auto !important;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-muted);
+}
+.apply-nav-item:hover {
+  background: var(--color-soft);
+  color: var(--color-ink);
+}
+.apply-nav-item.active,
+.apply-nav-item.active:hover {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-active);
+}
+/* 「不再追踪」沉底靠下（借主导航设置沉底的视觉语义，正负向状态分离）。 */
+.apply-nav-item--bottom {
+  margin-top: auto;
+}
+
+/* ---- 右侧视图 ---- */
+.apply-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+/* 顶栏：标题 + 排序/筛选 + 刷新 */
+.apply-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex: none;
+}
+.apply-head-title h1 {
+  font-size: var(--font-size-heading);
+  font-weight: var(--font-weight-semibold);
+}
+.apply-head-title p {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+.apply-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* 排序/筛选控件 */
+.apply-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  flex: none;
+}
+
+/* 工具条：排序/筛选（检索控制台弹窗触发胶囊同行，右对齐） */
+.apply-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  flex: none;
+}
+
+/* 触发胶囊 + 刷新按钮同一行（仅未处理 tab） */
+.apply-console-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: none;
+}
+.apply-console-actions {
+  margin-left: auto;
+  flex: none;
+}
+
+/* 语义时间键标签（ADR 0013）：统一控件最左的文字前缀（收录/投递/录用/处理时间）。 */
+.apply-time-key {
+  flex: none;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+}
+
+/* 刷新结果反馈 */
+.apply-refresh-result {
+  flex: none;
+  font-size: var(--font-size-sm);
+  color: var(--color-success);
+  background: var(--color-success-soft);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+}
+
+/* 单列岗位列表：主区自滚 */
+.apply-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+}
+
+/* 职位列表容器底（方案 A）：浅灰 panel，白卡 item 浮起。
+   职位列表 + 面试日历共用（日历格是白卡，灰底上同样浮起，右侧视觉统一）。 */
+.apply-list--panel {
+  background: var(--color-soft);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  gap: var(--space-3);
+}
+
+/* 空态：撑满列表区，图标 + 标题 + 描述垂直水平居中（骨架与列表同高） */
+.apply-empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  text-align: center;
+  padding: var(--space-5);
+}
+.apply-empty h3 {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-ink);
+  margin: 0;
+}
+.apply-empty p {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  max-width: 360px;
+  margin: 0;
+}
+
+/* 岗位行（可点击，打开详情弹窗） */
+.apply-job-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  text-align: left;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--color-ink);
+}
+.apply-job-row:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+.apply-job-row.is-closed {
+  opacity: 0.55;
+  background: var(--color-soft);
+}
+
+.apply-job-main {
+  flex: 1;
+  min-width: 0;
+}
+.apply-job-title-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+.apply-job-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+}
+.apply-job-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+.apply-job-skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.apply-job-skill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+  background: var(--color-soft);
+  border-radius: 999px;
+  padding: 1px var(--space-2);
+}
+
+.apply-job-side {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+.apply-job-liveness {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+.liveness-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.liveness-active {
+  background: var(--color-success);
+}
+.liveness-stale {
+  background: var(--color-warning);
+}
+.liveness-closed {
+  background: var(--color-muted);
+}
+.liveness-unknown {
+  background: var(--color-placeholder);
+}
+
+/* 筛选反馈小标签（列表行侧） */
+.apply-job-screening-tag {
+  font-size: var(--font-size-xs);
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  border-radius: 999px;
+  padding: 1px var(--space-2);
+}
+
+/* ---- 详情弹窗 ---- */
+.apply-detail-overview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  min-width: 860px;
+}
+.apply-detail-overview-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.apply-detail-overview-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+/* 应用内岗位页（独立投递窗口承载；弹窗内仅留「应用内打开」入口 + 占位） */
+.apply-detail-frame {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: var(--space-3);
+  min-width: 860px;
+  display: flex;
+  flex-direction: column;
+}
+.apply-detail-frame-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-soft);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  border-bottom: 1px solid var(--color-border-light);
+}
+/* 占位区：独立窗口承载真实岗位页，弹窗内只放提示 + 打开入口 */
+.apply-detail-frame-body {
+  flex: 1;
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  text-align: center;
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+}
+.apply-detail-frame-body p {
+  margin: 0;
+}
+
+/* 平台登录 chip 排（Pad 内「登录平台」模块） */
+.apply-login-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+/* 胶囊形状（Mantine default 变体是 6px 圆角白/灰底，这里特化为全圆角 + 细边），
+   hover 换主色描边 + 淡主色底。字号/字重/内边距走主题层（sm 档 12px），不再重复声明。 */
+.apply-login-chip {
+  border-radius: 999px;
+  border-color: var(--color-border-light);
+  padding: var(--space-1) var(--space-3);
+  color: var(--color-ink);
+  font-weight: var(--font-weight-medium);
+}
+.apply-login-chip:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+.apply-login-logo {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  object-fit: contain;
+  flex: none;
+}
+/* leftSection 容器：登录态点 + 平台 logo 并排（6px 间距，实测比 --space-2 更贴合紧凑胶囊） */
+.apply-login-chip-lead {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.login-state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-placeholder);
+  flex: none;
+}
+.login-state-dot.on {
+  background: var(--color-success);
+}
+
+/* JD 正文块（详情弹窗内，描述非空才显示） */
+.apply-detail-jd {
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+  background: var(--color-panel);
+}
+.apply-detail-jd-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-muted);
+  margin-bottom: var(--space-2);
+}
+.apply-detail-jd-body {
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* 外部操作框：筛选反馈 */
+.apply-detail-screening {
+  border-top: 1px solid var(--color-border-light);
+  padding-top: var(--space-3);
+}
+.apply-detail-screening-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-muted);
+  margin-bottom: var(--space-2);
+}
+
+/* ---- 检索控制台：ToolTab 工具坞（触发标签 + 浮窗） ----
+   与简历页优化点/资料集同一套 ToolTab 语言（2026-08-24 从 Modal 迁入）。
+   触发标签复用全局 .tool-tab（实底工具按钮），此文件只写检索控制台专有布局。 */
+
+/* 浮窗：ToolTab panelClassName 覆写（align=left，从触发标签左缘向右铺）。
+   宽度给三模块（关键词编辑 + 城市 + 保存）足够横向空间。
+   2026-09-01：补 z-index:60——.tool-panel 是 fixed 但无 z-index，会被 Mantine 层叠更高
+   的元素盖住；与简历页 suggestion/facts 浮窗同层。 */
+.console-panel {
+  width: 620px;
+  max-width: calc(100vw - 2 * var(--space-4));
+  padding: var(--space-3) var(--space-4);
+  overflow-y: auto;
+  z-index: 60;
+  /* 城市下拉渲染在面板内（withinPortal:false，见 QueryGroupsEditor）——两处必须同源：
+     portal 下拉点选项在 body、ToolTab 的 useClickOutside 误判为外部点击把面板收回，
+     故下拉改画在面板内；而 .tool-panel 默认 overflow:hidden 会把它裁掉，这里放开。
+     面板自身滚动仍由上面的 overflow-y:auto 承担。 */
+  overflow: visible;
+}
+
+/* 浮窗标题（原 Modal 标题移入：ToolTab 浮窗无自带标题栏） */
+.console-panel-title {
+  font-size: var(--font-size-title);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-ink);
+  padding-bottom: var(--space-2);
+}
+
+/* 浮窗内容：三个平行模块（原 .console-modal-body，去 Modal min-width 假设） */
+.console-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Pad 内平行模块：统一「标题行 + 内容」结构（登录平台块仍用此 wrapper） */
+.console-module {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border-light);
+}
+
+/* 方向字段：布局（label/description 现经 Mantine 内置机制渲染，2026-09-01） */
+.direction-field {
+  flex: none;
+}
+.direction-keywords {
+  flex: 1;
+  min-width: 260px;
+}
+.query-groups-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.query-group-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+.query-group-input {
+  flex: 1;
+}
+/* 逐组城市选择器（ADR 0019）：城市挂到组上，与组词同行、定宽。 */
+.query-group-city {
+  width: 130px;
+  flex-shrink: 0;
+}
+.query-group-add {
+  align-self: flex-start;
+}
+.query-group-add-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.query-group-limit-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+}
+.direction-city {
+  width: 160px;
+}
+.direction-confirm p {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+}
+.direction-confirm .direction-confirm-hint {
+  color: var(--color-warning);
+}
+
+/* 求职之路开关状态（开启后显示 backlog） */
+.apply-mode-status {
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+}
+
+/* ---- 求职之路指示器（2026-09-01 整合：状态点迁入检索控制台胶囊内） ---- */
+/* 状态点（三态圆点，现在寄生于 ConsoleTrigger 胶囊 label 内最左） */
+.crawl-indicator-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+/* 三态：running 绿转圈 / restricted 黄 / idle 灰 */
+.crawl-indicator-dot-running {
+  background: var(--color-success);
+}
+.crawl-indicator-dot-restricted {
+  background: var(--color-warning);
+}
+.crawl-indicator-dot-idle {
+  background: var(--color-placeholder);
+}
+.crawl-indicator-spin {
+  animation: crawl-indicator-spin 0.9s linear infinite;
+  color: var(--color-on-primary);
+}
+@keyframes crawl-indicator-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.crawl-indicator-label {
+  line-height: 1;
+}
+.crawl-indicator-chevron {
+  color: var(--color-muted);
+}
+
+/* 触发器 label：状态点 + Crosshair + 缩略文案（ToolTab 内联左对齐） */
+.console-trigger-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 折叠块（检索条件 / 岗位获取），2026-09-01 三块整合 */
+.console-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border-light);
+}
+/* 折叠块题目行：Mantine subtle 钮撑满行宽；标题与 chevron 左贴，
+   右侧可选件（岗位获取的 Switch）经 rightSection 顶到最右。 */
+.console-section-head {
+  --button-height: auto !important;
+  width: 100%;
+  padding: 0;
+  color: var(--color-ink);
+}
+.console-section-head:hover {
+  background: transparent;
+}
+.console-section-head:hover .console-section-title {
+  color: var(--color-primary);
+}
+/* 标题+chevron 走 leftSection：让 label 撑满整行（左段贴左、rightSection 被顶到最右），
+   再用 label 作为 flex 容器排布标题与 chevron。 */
+.console-section-head-label {
+  flex: 1;
+  justify-content: flex-start;
+  gap: var(--space-1);
+  min-width: 0;
+  color: var(--color-ink);
+}
+.console-section-right {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+}
+.console-section-head:hover .console-section-title {
+  color: var(--color-primary);
+}
+/* 登录平台等恒展开块：题目行不可点 */
+.console-section-head-static {
+  pointer-events: none;
+}
+.console-section-head-static:hover .console-section-title {
+  color: var(--color-ink);
+}
+.console-section-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-ink);
+}
+.console-section-chevron {
+  color: var(--color-muted);
+  flex: none;
+}
+.console-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.console-section-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: var(--space-1);
+}
+
+/* 求职之路设置弹窗 */
+.crawl-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.crawl-modal-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.crawl-modal-section-title {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-muted);
+}
+.crawl-modal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+.crawl-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 求职之路详细设置（quota/cap/触发值，apply.md §8⑥） */
+.apply-mode-detail-toggle {
+  margin-top: var(--space-1);
+  padding: 0 var(--space-2);
+}
+.apply-mode-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+.apply-mode-detail-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+.apply-mode-detail-label {
+  align-self: center;
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+  margin-right: var(--space-1);
+}
+.apply-mode-number {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- 状态 tab + hover 遮罩 + 关窗标记（2026-08-30 投递跟进） ---- */
+
+.apply-tab-count {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+  background: var(--color-soft);
+  border-radius: 999px;
+  padding: 0 7px;
+  line-height: 1.5;
+}
+.apply-nav-item.active .apply-tab-count {
+  color: var(--color-primary-active);
+  background: var(--color-primary-soft);
+}
+
+/* ---- 日期分割线（天粒度，借 beacon activityList 三段式视觉，light 化） ---- */
+.apply-day-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.apply-day-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+}
+.apply-day-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, var(--color-border) 40%);
+}
+.apply-day-line:last-child {
+  background: linear-gradient(270deg, transparent 0%, var(--color-border) 40%);
+}
+.apply-day-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+  background: var(--color-panel);   /* 容器已是 --color-soft，label 用白底避免融进容器 */
+  border-radius: 999px;
+  padding: 2px var(--space-3);
+  white-space: nowrap;
+}
+
+/* ---- 连体 pill 时间控件（ADR 0013 + 左右合并）：[日期范围触发器 | 正倒序箭头] ---- */
+/* 连体 pill 容器：面板锚点 + × 定位锚点。 */
+.apply-time-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+/* 共用外壳：唯一的外部轮廓（描边 + 圆角 + 底）。两段内层全去描边去圆角透明底，
+   中缝用一条竖分隔线切开——看起来是一整根 pill，不是两个并排按钮。 */
+.apply-time-pill-body {
+  display: inline-flex;
+  align-items: stretch;
+  height: 30px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-panel);
+  overflow: hidden;   /* 裁掉内层 hover 底色溢出圆角 */
+}
+/* 左段：日期触发器。包一层 relative 让 × 绝对定位叠在触发器右缘内部，出现/消失不推挤宽度。 */
+.apply-time-pill-date {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+/* Mantine subtle 钮：只覆盖「撑满外壳高度 + 固定 200px 槽宽 + 透明底」。
+   ADR 0013：固定宽度容纳完整「YYYY-MM-DD – YYYY-MM-DD」区间，选前选后不跳。 */
+.apply-date-trigger {
+  --button-height: 100% !important;
+  gap: var(--space-2);
+  width: 200px;
+  padding: 0 var(--space-3);
+  background: transparent;
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+  transition: background-color 0.2s var(--ease-out), color 0.2s var(--ease-out);
+}
+.apply-date-trigger:hover {
+  background: var(--color-soft);
+  color: var(--color-ink);
+}
+/* 已选范围态：软主色底（对齐旧 Mantine variant="light" 的视觉）。 */
+.apply-date-trigger.is-set {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-active);
+}
+.apply-date-trigger .apply-date-trigger-label {
+  /* 文案超长时截断而不撑宽（固定宽度的兜底）；右侧留出 × 的呼吸位 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: var(--space-4);
+}
+/* 清除钮（已选范围时出现）：绝对定位叠在触发器右缘内部，不再占据布局宽度。 */
+/* Mantine subtle 钮：绝对定位叠在触发段右缘内部，出现/消失不推挤宽度。 */
+.apply-date-clear {
+  position: absolute;
+  right: var(--space-2);
+  --button-height: auto !important;
+  padding: 0;
+  color: var(--color-muted);
+  font-size: var(--font-size-lg);
+  line-height: 1;
+}
+.apply-date-clear:hover {
+  color: var(--color-ink);
+}
+
+/* 右段：正倒序箭头（无文字）。左缘一条竖分隔线，与日期段共用一根外壳。 */
+/* 右段：正倒序箭头。Mantine subtle 钮 + 中缝竖分隔线（与日期段共用一根外壳）。 */
+.apply-order-toggle {
+  --button-height: 100% !important;
+  width: 30px;
+  padding: 0;
+  border-left: 1px solid var(--color-border);   /* 中缝竖分隔线 */
+  background: transparent;
+  color: var(--color-muted);
+  transition: color 0.2s var(--ease-out), background-color 0.2s var(--ease-out);
+}
+.apply-order-toggle:hover {
+  color: var(--color-primary-active);
+  background: var(--color-soft);
+}
+
+/* 日历面板：挂在触发钮下方，absolute 定位；z-index 抬过 .tool-panel(60)。玻璃拟态皮肤。 */
+.apply-date-panel {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;                 /* 控件右对齐，面板从右缘向左铺 */
+  z-index: 300;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  padding: var(--space-3);
+}
+
+/* react-day-picker 内层 → Alger token（紧凑 + 主色绿）。格子固定小尺寸，绝不被全局表格规则撑爆。 */
+.apply-date-panel .rdp-root {
+  --rdp-day-height: 30px;
+  --rdp-day-width: 30px;
+  --rdp-day_button-height: 26px;
+  --rdp-day_button-width: 26px;
+  --rdp-nav_button-height: 24px;   /* 默认 2.25rem(36px) 太大，压到 24 */
+  --rdp-nav_button-width: 24px;
+  --rdp-nav-height: 30px;
+  --rdp-accent-color: var(--color-primary);
+  --rdp-range_middle-background-color: var(--color-primary-soft);
+  --rdp-range_middle-color: var(--color-ink);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+}
+.apply-date-panel .rdp-month_caption {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+}
+/* 选中日期：库默认 .rdp-selected{font-weight:bold;font-size:large} 把字放大加粗，压回常规字号字重 */
+.apply-date-panel .rdp-selected {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-normal);
+}
+/* 左右翻页箭头：chevron 是 fill 的 SVG，默认撑满按钮偏大，显式收小 */
+.apply-date-panel .rdp-chevron {
+  width: 12px;
+  height: 12px;
+}
+
+.apply-reason-filter-row {
+  margin-top: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+/* 岗位卡片 hover 遮罩：灰色半透明玻璃 + 按钮 */
+.apply-job-row {
+  position: relative;
+}
+.apply-job-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  background: var(--overlay-scrim);
+  backdrop-filter: blur(2px);
+  border-radius: var(--radius);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.apply-job-row:hover .apply-job-overlay {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* hover 蒙层里的浮起钮：白底压在深色 scrim 上，Mantine default 变体的灰底/细边不适用，
+   故覆盖成纯白底 + 更宽的 10px 圆角（与卡片容器同档）。尺寸走 size="compact-sm"。 */
+.apply-overlay-view,
+.apply-overlay-btn {
+  background: var(--overlay-btn-bg);
+  border: none;
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-ink);
+}
+.apply-overlay-view {
+  font-weight: var(--font-weight-semibold);
+}
+.apply-overlay-btn {
+  font-weight: var(--font-weight-medium);
+}
+.apply-overlay-view:hover,
+.apply-overlay-btn:hover {
+  background: var(--overlay-btn-bg-hover);
+}
+.apply-overlay-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* 不再追踪原因 chip（列表行侧） */
+.apply-job-reason-chip {
+  font-size: var(--font-size-xs);
+  color: var(--color-warning);
+  background: var(--color-warning-soft);
+  border-radius: 999px;
+  padding: 1px var(--space-2);
+}
+
+/* 关窗标记框 */
+.apply-mark-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.apply-mark-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+}
+.apply-mark-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+/* 关窗标记框的备注输入：形状/圆角/内边距/高度走 Mantine TextInput（sm 档 30px，
+   与上方 Select 同高），这里只补两处与全站不同的取值——更细的边框色 + 12px 字号。 */
+.apply-mark-note {
+  border-color: var(--color-border-light);
+  font-size: var(--font-size-sm);
+}
+
+/* ---- 面试日历（2026-08-31，ADR 0006） ---- */
+
+.interview-calendar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+  min-height: 0;
+}
+
+.ivcal-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  flex: none;
+  /* 白条容器：日期选择器收进一块白底，灰容器上浮起（与日历格白卡一致） */
+  background: var(--color-panel);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  box-shadow: var(--shadow-card);   /* 质感：白条浮起，与灰容器分层 */
+}
+/* 翻月组（‹ 标题 ›）：固定槽位 + 组内居中，箭头钉死不随月份数字宽度位移 */
+.ivcal-monthnav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);        /* 标题与两侧箭头的固定间距 */
+  flex: 1;                   /* 占据中央，把「今天」挤到最右 */
+  justify-content: center;
+  min-width: 0;
+}
+/* 翻月箭头：30px 方形图标钮 + 细主色边（Mantine variant="default" 只给 6px 圆角灰底，
+   这里特化尺寸与 hover 换主色描边——与「今天」胶囊成组呼应）。 */
+.ivcal-nav {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-color: var(--color-border-light);
+  color: var(--color-muted);
+  transition: background 0.2s cubic-bezier(0.16, 1, 0.3, 1), color 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ivcal-nav:hover {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.ivcal-title {
+  font-size: var(--font-size-title);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-ink);
+  text-align: center;
+  letter-spacing: 0.02em;   /* 质感：年月标题微松字距 */
+  font-variant-numeric: tabular-nums;   /* 数字等宽，翻月时标题宽度不跳 */
+  width: 18ch;               /* 固定槽宽：月份数字变化时两侧箭头纹丝不动 */
+  flex: none;
+}
+/* 「今天」胶囊：细边 pill + 锚到白条最右。与翻月箭头同 hover 语义（换主色描边）。 */
+.ivcal-today {
+  border-color: var(--color-border-light);
+  color: var(--color-muted);
+  padding: var(--space-1) var(--space-3);
+  margin-left: auto;        /* 锚到白条最右，与中央翻月组分离 */
+  transition: background 0.2s cubic-bezier(0.16, 1, 0.3, 1), color 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ivcal-today:hover {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* 星期行 + 42 格合成一张大白卡（方向 2）：星期行是卡内列标题，格子改为格线单元 */
+.ivcal-sheet {
+  background: var(--color-panel);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius);
+  overflow: hidden;          /* 格线/高亮收进圆角 */
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ivcal-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  flex: none;
+  border-bottom: 1px solid var(--color-border);
+}
+.ivcal-weekday {
+  text-align: center;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+  padding: var(--space-2) 0;
+}
+
+.ivcal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: minmax(96px, 1fr);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 格线单元：无独立卡片边，用 1px 细线分隔（每行末格去右线、末行去下线） */
+.ivcal-day {
+  background: var(--color-panel);
+  border-right: 1px solid var(--color-border-light);
+  border-bottom: 1px solid var(--color-border-light);
+  padding: var(--space-1) var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+  position: relative;
+}
+.ivcal-day.no-r { border-right: none; }
+.ivcal-day.no-b { border-bottom: none; }
+.ivcal-day.is-other {
+  background: var(--color-canvas);
+}
+.ivcal-day.is-other .ivcal-day-num {
+  color: var(--color-placeholder);
+}
+.ivcal-day.is-today {
+  background: var(--color-primary-soft);
+}
+/* 过去：内容半透明（可点回看历史） */
+.ivcal-day.is-past .ivcal-day-items {
+  opacity: 0.55;
+}
+
+.ivcal-day-num {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-muted);
+  text-align: right;
+}
+.ivcal-day.is-today .ivcal-day-num {
+  color: var(--color-primary);
+}
+
+.ivcal-day-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+}
+.ivcal-day-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ivcal-day-group-label {
+  font-size: 10px;
+  color: var(--color-placeholder);
+  padding-left: 2px;
+}
+
+/* 格内一条面试缩略信息 */
+.ivcal-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  background: var(--color-primary-soft);
+  border-radius: 4px;
+  padding: 2px 4px;
+  cursor: pointer;
+  overflow: hidden;
+}
+.ivcal-chip-time {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-primary);
+}
+.ivcal-chip-round {
+  color: var(--color-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 今天整格淡绿底，chip 改白底避免融进格底 */
+.ivcal-day.is-today .ivcal-chip {
+  background: var(--color-panel);
+}
+/* hover 蒙版：灰色半透明 + 左详情右结果 */
+.ivcal-chip-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: var(--overlay-scrim);
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ivcal-chip:hover .ivcal-chip-overlay {
+  opacity: 1;
+  pointer-events: auto;
+}
+.ivcal-chip-btn {
+  border: none;
+  background: var(--overlay-btn-bg);
+  color: var(--color-ink);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+.ivcal-chip-btn:hover {
+  background: var(--overlay-btn-bg-hover);
+}
+
+/* 面试弹窗 */
+.iv-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 420px;
+}
+.iv-detail-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+.iv-detail-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.iv-detail-meta-label {
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+}
+.iv-detail-meta-value {
+  font-size: var(--font-size-lg);
+  color: var(--color-ink);
+  font-weight: var(--font-weight-medium);
+}
+.iv-detail-jd {
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  background: var(--color-panel);
+}
+.iv-detail-jd-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-muted);
+  margin-bottom: var(--space-2);
+}
+.iv-detail-jd-body {
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.iv-detail-ai {
+  font-size: var(--font-size-sm);
+  color: var(--color-placeholder);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  text-align: center;
+}
+.iv-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 360px;
+}
+
+
+/* ---------------------------------------------------------------------------
+   投递页分析面板（apply.md §11.7.1，2026-09-14）
+   形态 = 顶部一行控件（ToolTab 同款），点击展开。**不是右栏**——固定右栏会暗示
+   "分析默认开着、一直要参照"，而多数时候用户只瞥一眼列表。
+   左侧区：检索控制台触发 + 分析触发并排（未处理 tab 两个都在）。
+--------------------------------------------------------------------------- */
+.apply-console-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: none;
+  min-width: 0;
+}
+
+/* 触发标签：Sparkles + 标题 + 待收录处方数角标 */
+.analysis-trigger-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.analysis-trigger-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* 展开浮窗：玻璃质感与 console-panel 同源，宽度窄些（报告正文为主） */
+.analysis-panel {
+  width: 520px;
+  max-width: calc(100vw - 2 * var(--space-4));
+  max-height: 60vh;
+  padding: var(--space-3) var(--space-4);
+  overflow-y: auto;
+  z-index: 60;
+}
+
+.analysis-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* 分析中 / 空态 */
+.analysis-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+.analysis-empty {
+  font-size: var(--font-size-lg);
+  color: var(--color-muted);
+  text-align: center;
+  padding: var(--space-3) 0;
+}
+
+/* 报告：一句话结论 + 正文 */
+.analysis-headline {
+  font-size: var(--font-size-title);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-ink);
+  line-height: var(--line-height-normal);
+}
+.analysis-text {
+  font-size: var(--font-size-lg);
+  color: var(--color-ink);
+  line-height: var(--line-height-relaxed);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.analysis-meta {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+/* 分析报告配图（ChartRenderer，2026-09-15 自由配图）：块流内文/图穿插，图块上下留白。 */
+.chart-block {
+  margin-top: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.chart-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-ink);
+  margin-bottom: var(--space-2);
+}
+.chart-note {
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+  margin-top: var(--space-2);
+}
+
+/* 处方区：标题 + 一列建议卡（复用 SuggestionCard，动作区注入「改进」） */
+.analysis-prescriptions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.analysis-prescriptions-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-muted);
+}
+
+/* 面试详情弹窗内的单场准备（原 iv-detail-ai 虚线占位升级为真实内容） */
+.iv-detail-ai .analysis-status {
+  justify-content: center;
+}
+.iv-detail-ai .analysis-headline,
+.iv-detail-ai .analysis-text {
+  text-align: left;
+}

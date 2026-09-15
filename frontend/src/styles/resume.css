@@ -1,0 +1,1694 @@
+/* ---------------------------------------------------------------------------
+   简历页：左右结构（左简历预览 / 右聊天框）
+   --------------------------------------------------------------------------- */
+.resume-layout {
+  display: grid;
+  /* 默认两列（左弹性 | 右固定 400px）：供 VersionReview 等无分割条的回看布局用。
+     简历页主布局由 ResumePage 内联 style 覆盖为三列（左 | 1px 竖线 | 右，拖拽改比例）。 */
+  grid-template-columns: 1fr 400px;
+  /* 可用高度 = 100vh − titlebar − statusbar − app-main 上下 padding（2 × --space-5）。
+     原写死 3.5rem 多扣了 8px，Pad 底部比可用空间短一截（贴不住 app-main 下缘）。 */
+  height: calc(100vh - var(--spacing-titlebar) - var(--spacing-statusbar) - (2 * var(--space-5)));
+  min-height: 0;
+  /* 一个 Pad：左右两栏拼成同一张卡片容器，外框/圆角/白底都在这一层 */
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+/* 竖分割线：1px 竖线，整条是拖拽把手。常态 = 左右栏分界细线；
+   hover/active 加深 + 加粗热区反馈，cursor 提示可左右拖。 */
+.resume-splitter {
+  cursor: col-resize;
+  position: relative;
+  background: var(--color-border-light);
+  transition: background-color 0.2s var(--ease-out);
+  /* 视觉是 1px 竖线，但向左/右各扩 3px 透明热区（伪元素），比 1px 好抓 */
+}
+.resume-splitter::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+}
+.resume-splitter:hover,
+.resume-splitter:active {
+  background: var(--color-primary);
+}
+/* 拖拽分割中：左栏 iframe 不截获鼠标事件（否则 mousemove/mouseup 被 iframe 吞掉、拖动中断）。
+   同时整窗强制 col-resize 光标，拖到 iframe 上方光标也不闪回默认。 */
+.resume-left.split-dragging iframe {
+  pointer-events: none;
+}
+
+/* ---- 简历缩放控件（2026-08-24，仅生成的 HTML 简历开放） ----
+   左下角悬浮玻璃：− / 输入% / ＋。复用 .glass 语言（玻璃底 + blur + 细边 + pop 影）。 */
+.resume-zoom-anchor {
+  position: absolute;
+  left: var(--space-3);
+  bottom: var(--space-3);
+  z-index: 6; /* 压 iframe 之上、低于 generate-actions(5)→提 6 同级；玻璃浮层不挡拖拽 */
+}
+.zoom-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius);
+}
+/* 统一「不可用=置灰」（2026-09-02 grill）：上传原件时整组控件降透明 + 禁点（仍渲染可见）。 */
+.zoom-control.is-disabled {
+  opacity: 0.45;
+}
+/* Mantine subtle 钮（size=compact-xs）：只覆盖 22px 方；hover/disabled 走主题层。 */
+.zoom-btn {
+  --button-height: 22px !important;
+  width: 22px;
+  padding: 0;
+  color: var(--color-ink);
+}
+/* Mantine TextInput：只覆盖成「无框内联数字框」，聚焦态靠下方主色横线（不打断玻璃整体）。 */
+.zoom-input {
+  width: 40px;
+  height: 22px;
+  min-height: 22px;
+  border: none;
+  background: transparent;
+  text-align: right;
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+  padding: 0;
+  font-variant-numeric: tabular-nums;
+}
+.zoom-input:focus {
+  outline: none;
+  box-shadow: none;
+  border-bottom: 1px solid var(--color-primary);
+  border-radius: 0;
+}
+.zoom-pct {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+/* ---- 「编辑项」面板（2026-09-02，排版自由度四参数：字号/行距/段距/字间距） ----
+   预览区顶栏按钮 + ToolTab 玻璃浮窗（与优化点/资料集同款）。每行 = 标签 | 滑块 | 数值+单位，底注各项范围。 */
+.tool-panel.edit-panel-window {
+  width: 340px; /* 数值右侧多出单位格 + 底注范围，略宽 */
+  z-index: 60;
+}
+.edit-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+/* 每个编辑项 = 一个 grid：行1=标签|滑块|数值+单位，行2=小字落在滑块列（第2列），
+   左缘跟着滑块列宽走、天然与滑块平齐（不算数，避免 Slider 轨道内边距/数值框宽度把估算带偏）。 */
+.edit-panel-item {
+  display: grid;
+  grid-template-columns: 3.2em 1fr auto; /* 标签 | 滑块(弹性) | 数值+单位 */
+  align-items: center;
+  column-gap: var(--space-2);
+  row-gap: 2px;
+}
+/* 小字：范围 + 默认值（与 PARAMS 同源），落在滑块列（第 2 列）、第 2 行。 */
+.edit-panel-meta {
+  grid-column: 2;
+  font-size: var(--font-size-xs);
+  color: var(--color-placeholder);
+}
+.edit-panel-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  flex: none;
+}
+.edit-panel-slider {
+  flex: 1;
+  min-width: 0;
+}
+/* 数值框 + 右侧单位（×/px） */
+.edit-panel-value {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+.edit-panel-unit {
+  font-size: var(--font-size-sm);
+  color: var(--color-placeholder);
+  min-width: 1.6em; /* 'px' 与 '×' 对齐 */
+  text-align: left;
+}
+.edit-panel-number {
+  width: 64px;
+  flex: none;
+}
+.edit-panel-number input {
+  text-align: right;
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+}
+/* 小字里的「默认 N倍/px」：去斜体、墨色弱一级，跟在范围后作对照。 */
+.edit-panel-def {
+  font-style: normal;
+  margin-left: 6px;
+  color: var(--color-muted);
+}
+/* 「自动一页」按钮（2026-09-02）：与上方滑杆组拉开一档间距，成独立动作区。 */
+.edit-panel-autofit {
+  margin-top: var(--space-2);
+}
+
+/* 左栏（融入 Pad：去各自边框/圆角/背景，由 .resume-layout 容器承载外框） */
+.resume-left {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto; /* 版本面板/蒙版过高时允许滚动，不被截断 */
+}
+.resume-left-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border-light);
+  height: 52px; /* 与右栏 chat-panel-head 等高：由标题(22px)撑起，非按钮 */
+  flex: none;
+}
+/* 标题走全站统一 .page-title（primitives.css），此条删除（2026-08-24 三页标题收敛） */
+/* 页头右侧动作组（编辑项/版本/下载/移除）：横排居中。 */
+.resume-left-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+/* 生成确认条的修改意见输入：给个下限宽度，太窄写不下整句。 */
+.generate-revise-input {
+  min-width: 260px;
+}
+/* 版本历史浮窗（2026-08-24）：从「左栏内联折叠面板」改为 ToolTab 玻璃浮窗（盖在内容上方）。
+   .tool-panel 提供玻璃底 + fixed 定位 + flex；这里只覆写尺寸 + 让行可滚动。 */
+.version-panel {
+  width: 380px;
+  max-height: 60vh;
+  /* fixed 浮窗不设 z-index 会被聊天输入框（Mantine Textarea 层叠更高）盖住；
+     与建议/资料集浮窗同层 z-index:60。 */
+  z-index: 60;
+}
+.version-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-2);
+}
+.resume-version-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1)
+}
+.resume-version-source {
+  flex: 1;
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+/* 版本号 + 日期：数字等宽（2026-08-18 批次 3 tabular-nums） */
+.resume-version-row .chip,
+.resume-version-date {
+  font-variant-numeric: tabular-nums;
+}
+.resume-version-date {
+  font-size: var(--font-size-sm);
+  color: var(--color-placeholder);
+}
+/* 版本行回滚按钮推到行尾（Mantine Button） */
+.resume-version-row .mantine-Button-root {
+  margin-left: auto
+}
+.resume-preview {
+  flex: 1;
+  min-height: 0;
+  background: var(--color-canvas);
+  /* 甲+拖（2026-08-24）：预览容器 flex 居中——纸类预览（HTML/PDF）限宽居中，
+     两侧留 canvas 呼吸边，栏再宽纸也不被拉宽失真。流式预览（text/markdown）仍铺满。 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.resume-empty {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  overflow-y: auto; /* 内容总高超过预览框时滚动而非裁掉（拖拽提示+按钮在小窗会被 justify-content:center 双向裁掉） */
+}
+/* 居中但不裁内容（经典 auto-margin 技巧）：内容总高 < 容器时伪元素上下 auto 边距平分
+   空余 → 视觉居中；溢出时无空余 → 边距归零、内容顶部对齐，交给 overflow-y:auto 滚动。 */
+.resume-empty::before {
+  content: '';
+  margin-top: auto;
+}
+.resume-empty::after {
+  content: '';
+  margin-bottom: auto;
+}
+
+/* 右栏聊天框 */
+.resume-right {
+  position: relative; /* FactsPanel 悬浮按钮定位参照 */
+  min-height: 0;
+  min-width: 0;
+  /* 无分割条的布局（VersionReview）：右栏以左边界线作分界（融入 Pad 后两栏相邻需分隔） */
+  border-left: 1px solid var(--color-border-light);
+}
+/* 有分割条的主布局：竖线已是分界，右栏去左边界线，避免双线 */
+.resume-splitter + .resume-right {
+  border-left: none;
+}
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  /* 融入 Pad：去各自边框/圆角/背景，由 .resume-layout 容器承载外框 */
+}
+/* 聊天框顶部工具条（2026-08-08）：与左栏 resume-left-head 同款，挂资料集/优化点 */
+.chat-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border-light);
+  height: 52px; /* 与左栏 resume-left-head 等高：由标题(22px)撑起，非按钮 */
+  flex: none;
+}
+/* 回看模式右栏顶栏（2026-08-10，VersionReview）：标题 + 「回滚到当前/退出回看」 */
+.review-chat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border-light);
+  height: 52px;
+  flex: none;
+}
+.review-chat-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-placeholder);
+}
+.review-chat-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.review-chat-messages {
+  background: var(--color-panel);
+}
+.chat-empty-hint {
+  margin: auto;
+  color: var(--color-placeholder);
+  font-size: var(--font-size-sm);
+}
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  /* 隐藏右侧滚动条（保留可滚动）：Webkit + Firefox */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.chat-messages::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.chat-row {
+  display: flex;
+}
+.chat-row.user {
+  justify-content: flex-end;
+}
+.chat-row.assistant {
+  justify-content: flex-start;
+}
+.chat-bubble {
+  max-width: 88%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-relaxed);
+}
+.chat-row.user .chat-bubble {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  border-bottom-right-radius: var(--radius-sm);
+}
+.chat-row.assistant .chat-bubble {
+  background: var(--color-soft);
+  color: var(--color-ink);
+  border-bottom-left-radius: var(--radius-sm);
+}
+.chat-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-typing {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-placeholder);
+  animation: chat-pulse 1s ease-in-out infinite;
+}
+.chat-typing-text {
+  margin-left: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-placeholder);
+}
+/* 版本分隔标记（§11.1 决策一：UI 连续显示所有 session 历史，版本变更处插分隔） */
+.chat-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+  padding: var(--space-1) 0
+}
+.chat-divider-line {
+  flex: 1;
+  height: 1px;
+  background: var(--color-border-light);
+}
+.chat-divider-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-placeholder);
+  white-space: nowrap;
+}
+/* 系统事件气泡（role=event，§11.3）：居中灰条，区分用户/助手气泡 */
+.chat-row.event {
+  justify-content: center;
+}
+.chat-event-bubble {
+  max-width: 88%;
+  padding: var(--space-1) var(--space-3);
+  border-radius: 999px; /* 全圆角（原 --radius-full 未定义，2026-08-18 批次 3 修幽灵变量） */
+  background: var(--color-soft);
+  color: var(--color-placeholder);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  text-align: center;
+}
+/* 系统气泡·错误红条（ADR 0009，kind=error_*）：与事件灰条同族但红色区分（12~18% 透明状态底色） */
+.chat-event-bubble.chat-event-error {
+  background: var(--color-error-soft);
+  color: var(--color-error);
+}
+/* 系统气泡·系统卡片（ADR 0009，kind=conflict）：居中、带按钮的结构化块，
+   视觉从助手侧拉开（不混进 assistant 气泡那侧）。 */
+.chat-row.system-card {
+  justify-content: center;
+}
+/* 聊天内提议卡（2026-08-13，agent 提议 → 用户确认）：
+   agent 文字话术 + 玻璃建议卡 + 收进已确认/继续聊按钮 */
+.chat-proposal {
+  max-width: 92%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.chat-proposal-text {
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-proposal-card {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+
+/* 聊天内冲突确认卡（甲方案，2026-08-13，事实真伪冲突 → 用户裁决） */
+.conflict-card {
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.conflict-card-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--color-ink);
+}
+.conflict-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  font-size: var(--font-size-sm);
+}
+.conflict-label {
+  color: var(--color-muted);
+  flex-shrink: 0;
+}
+.conflict-value {
+  color: var(--color-ink);
+  word-break: break-word;
+}
+.conflict-old {
+  color: var(--color-muted);
+  text-decoration: line-through;
+}
+.conflict-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+/* 聊天内方向提案卡（2026-08-19，agent 提炼方向 → 用户确认） */
+.direction-proposal-body {
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.direction-proposal-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  flex-wrap: wrap;
+}
+.direction-proposal-label {
+  color: var(--color-muted);
+  flex-shrink: 0;
+  font-weight: var(--font-weight-medium);
+}
+.direction-proposal-old {
+  color: var(--color-muted);
+  text-decoration: line-through;
+}
+.direction-proposal-arrow {
+  color: var(--color-primary);
+}
+.direction-proposal-new {
+  color: var(--color-ink);
+  font-weight: var(--font-weight-semibold);
+}
+.direction-proposal-keywords {
+  color: var(--color-ink);
+  word-break: break-word;
+}
+.direction-proposal-tag {
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  border-radius: 999px;
+  padding: 1px var(--space-2);
+  font-size: var(--font-size-xs);
+}
+.direction-proposal-actions {
+  display: flex;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+@keyframes chat-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+/* 聊天流内建议卡片（1.2，建议组，接受才进悬浮卡片） */
+.chat-suggest {
+  max-width: 92%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  background: var(--color-panel);
+  border: 1px solid var(--color-border); /* 2026-08-18 批次 3：建议卡容器边框加深 */
+  border-radius: var(--radius-lg);
+  padding: var(--space-3)
+}
+.chat-suggest-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0
+}
+.chat-suggest-title-text {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+}
+.chat-suggest-title-count {
+  font-size: var(--font-size-xs);
+  color: var(--color-placeholder);
+  background: var(--color-soft);
+  border-radius: 999px;
+  padding: 0 var(--space-1);
+}
+.chat-suggest-item {
+  border: 1px solid var(--color-border-light);
+  border-radius: 0.6rem;
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2)
+}
+.chat-suggest-item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2)
+}
+.chat-suggest-type {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-primary-active);
+  background: var(--color-primary-soft);
+  border-radius: 4px;
+  padding: var(--space-1) var(--space-1);
+}
+.chat-suggest-target {
+  font-size: var(--font-size-xs);
+  color: var(--color-placeholder);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-suggest-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2)
+}
+.chat-suggest-line {
+  display: flex;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+.chat-suggest-label {
+  color: var(--color-placeholder);
+  flex: none;
+  width: 2em;
+}
+.chat-suggest-orig {
+  color: var(--color-placeholder);
+  text-decoration: line-through;
+}
+.chat-suggest-new {
+  color: var(--color-ink);
+}
+.chat-suggest-reason {
+  font-size: var(--font-size-xs);
+  color: var(--color-placeholder);
+  font-style: italic;
+}
+.chat-suggest-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2)
+}
+/* .chat-suggest-accept/.chat-suggest-reject 无引用（孤儿类，2026-08-18 批次 2 删）——
+   建议/冲突/提议卡动作已迁 Mantine Button（§10.2 形态合同）。 */
+
+/* 加载图标旋转 */
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 忙碌遮罩（2026-08-14 统一）：盖住操作点窗口的毛玻璃 + 居中胶囊 */
+.busy-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(6px) saturate(1.5);
+  -webkit-backdrop-filter: blur(6px) saturate(1.5);
+  border-radius: inherit;
+}
+.busy-overlay-pill {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink); /* 原 --text-color 未定义（幽灵变量），2026-08-18 批次 3 修 */
+}
+
+/* markdown 排版 */
+.md-body > *:first-child { margin-top: 0 }
+.md-body > *:last-child { margin-bottom: 0 }
+.md-body p { margin: 0.35em 0 }
+/* 标题（2026-09-13）：聊天 markdown 里模型常写 `## 方向提案` 这类标题，此前 h1-h4 未定样式，
+   浏览器默认 h2=1.5em / h1=2em 直接继承气泡 13.5px 放大成大字，跟其他回复格格不入。
+   按 token 收进栈内（比正文 13.5px 高一档，字号递减、层级小于页头 h1）。 */
+.md-body h1, .md-body h2, .md-body h3, .md-body h4 {
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-tight);
+  color: var(--color-ink);
+  margin: 0.6em 0 0.3em;
+}
+.md-body h1 { font-size: var(--font-size-title) }   /* 15px */
+.md-body h2 { font-size: var(--font-size-md) }      /* 14px */
+.md-body h3, .md-body h4 { font-size: var(--font-size-lg) }  /* 13.5px = 正文，仅靠字重区分 */
+.md-body ul, .md-body ol { margin: 0.35em 0; padding-left: 1.3em }
+.md-body code {
+  background: rgba(0,0,0,0.08);
+  border-radius: 4px;
+  padding: var(--space-1) var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+.md-body pre {
+  background: #1e1e1e;
+  color: #eee;
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  overflow-x: auto;
+  font-size: var(--font-size-sm);
+}
+.md-body pre code { background: transparent; padding: 0; color: inherit; }
+
+/* 输入区 */
+.chat-input-area {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-top: 1px solid var(--color-border-light);
+}
+.chat-input {
+  flex: 1;
+  margin-bottom: 0;
+  min-width: 0; /* flex 子项防溢出：长文本时 input 区收缩而非撑破 */
+}
+/* Mantine Textarea autosize：wrapper 撑在输入区 flex 里，内层 textarea 限高。
+   autosize 高度由内容驱动（line-height 1.55×14 + 垂直 padding + 边框 ≈ 35px），
+   非固定档位，不吃全局 --input-height；min-height 38px 兜底保证单行有呼吸空间。
+   发送钮单独 38px 与之对齐（见下方 .chat-input-area .btn-icon）——输入框是「多行文本框」，
+   不是「一行表单控件」，不套用 30px 的同排对齐规则。 */
+.chat-input .chat-input-textarea {
+  min-height: 38px;
+  max-height: 120px;
+  resize: none;
+}
+/* 发送/停止钮（B 方案 2026-08-24）：单独定高对齐 autosize 输入框单行高，
+   不走全局 .btn-icon 30px。2026-08-25：定 37px（实测视觉与输入框单行同高）；
+   改圆形。注意主题层（alger.ts Button.styles）给所有按钮 root 内联 borderRadius=--radius-sm，
+   内联样式优先级高于 class，故此处 border-radius 必须 !important 才压得过。 */
+.chat-input-area .btn-icon {
+  width: 37px;
+  height: 37px;
+  border-radius: 50% !important;
+}
+/* 发送/停止上色（2026-08-25）：可发送=主色绿底白 icon、可取消=红底白 icon。
+   盖过 Mantine default 白底灰边（base.css 后于 Mantine styles 引入，背景/边框/颜色直接生效）。
+   禁用态（draft 空 / apply 锁）退回柔和灰，与默认图标钮观感一致，不用半透明底色。 */
+.chat-input-area .btn-icon-send:not(:disabled) {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-on-primary);
+}
+.chat-input-area .btn-icon-send:not(:disabled):hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+.chat-input-area .btn-icon-stop {
+  background: var(--color-error);
+  border-color: var(--color-error);
+  color: var(--color-on-primary);
+}
+.chat-input-area .btn-icon-stop:hover {
+  background: #dc2626;
+  border-color: #dc2626;
+}
+
+/* 简历左栏拖拽上传高亮
+   outline 会被不透明的 .resume-preview（background:canvas）盖住下半截——outline 画在
+   元素自身层级，子元素的实底背景盖在它上面（head 区透明才露出来）。改成 ::after 伪元素
+   内嵌虚线框，z-index 压到 preview 之上，四个边完整显示。 */
+.resume-left.drag-over {
+  background: var(--color-primary-soft);
+}
+.resume-left.drag-over::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border: 2px dashed var(--color-primary);
+  border-radius: var(--radius);
+  pointer-events: none; /* 不挡投放（drop 由父级 onDrop 收） */
+  z-index: 4; /* 压 preview 内容之上、低于 .resume-extract-float(5)/extract-card(6) */
+}
+
+/* ---------------------------------------------------------------------------
+   解析进度悬浮卡 + 抽取信息卡片（确认才入库）
+   2026-08-08：解析进度从全屏蒙版改为右下角悬浮卡（不遮挡简历内容），
+   样式类似信息卡（玻璃拟态），抽取完成直接转信息确认卡。
+   --------------------------------------------------------------------------- */
+
+/* 解析进度悬浮卡：右下角固定，玻璃拟态，不遮挡简历 */
+.resume-extract-float {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-3);
+  z-index: 5;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius);
+}
+.resume-preview {
+  position: relative; /* 悬浮卡定位参照 */
+}
+
+/* indeterminate 进度条：滚动细条（抽取无百分比） */
+.resume-extract-progress {
+  width: 100%;
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--color-soft);
+  overflow: hidden;
+}
+.resume-extract-bar {
+  height: 100%;
+  width: 35%;
+  border-radius: inherit;
+  background: var(--color-primary);
+  animation: extract-slide 1.2s var(--ease-out) infinite;
+}
+@keyframes extract-slide {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(320%); }
+}
+.resume-extract-text {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-ink);
+}
+.resume-extract-hint {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  max-width: 100%;
+}
+.resume-extract-error {
+  font-size: var(--font-size-lg);
+  color: var(--color-error);
+  max-width: 100%;
+}
+.resume-extract-float-actions {
+  display: flex;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+/* 抽取信息卡片（玻璃拟态弹层，总分两段式分组） */
+.extract-card {
+  position: absolute;
+  right: 0.75rem;
+  top: 0.75rem;
+  bottom: 0.75rem;
+  width: 340px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.extract-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border-light);
+  flex: none;
+}
+.extract-card-title {
+  font-size: var(--font-size-title); /* 2026-08-18 批次 3：15px title 档 */
+  font-weight: var(--font-weight-semibold);
+}
+.extract-card-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2)
+}
+.extract-card-empty {
+  color: var(--color-placeholder);
+  font-size: var(--font-size-lg);
+  text-align: center;
+  padding: var(--space-4)
+}
+.extract-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1)
+}
+.extract-group-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: var(--space-1)
+}
+/* 抽取卡条目样式已统一收敛到 FactItem（.fact-item 系，见「事实条目」区块）：
+   原 .extract-item/.extract-entry/.extract-child-list/.extract-input/.extract-add-entry
+   随满屏 Textarea 双态重构一并删除（孤儿类，2026-08-18 批次 1）。 */
+.extract-card-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border-light);
+  flex: none;
+}
+
+/* ---------------------------------------------------------------------------
+   信息库编辑面板（2026-08-08，docs/design/resume.md §10「信息库入口」补落地）
+   复用 ToolTab 标签 pill 挂聊天框右上；浮窗 **fixed 相对视口**——从右上
+   往左铺宽盖到预览区上空（不再受聊天框 400px / 容器 overflow 裁切），单列展示。
+   --------------------------------------------------------------------------- */
+/* 信息库浮窗（ToolTab 覆写）：fixed 视口定位（top/left 由 ToolTab 算），宽度放宽。
+   .tool-panel 提供玻璃底 + flex；这里只覆写尺寸。
+   双类选择器提升 specificity——.tool-panel 定义在后面（overflow:hidden 圆角裁切），
+   单类 .facts-panel-window 会被它覆盖，导致 Select 下拉仍被裁。 */
+.tool-panel.facts-panel-window {
+  width: 560px;
+  max-height: 70vh;
+  z-index: 60;
+  /* 下拉可见：Select 下拉渲染在面板内（withinPortal:false）时，需允许溢出面板显示。
+     .tool-panel 默认 overflow:hidden 会裁掉下拉——这里覆写 visible（双类保证覆盖）。
+     面板内滚动由 .facts-panel-body（overflow-y:auto）独立承担。 */
+  overflow: visible;
+}
+.facts-add {
+  position: relative;
+  z-index: 1;
+}
+.facts-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--color-border-light);
+  flex: none;
+}
+.facts-panel-title {
+  font-size: var(--font-size-title); /* 2026-08-18 批次 3：15px title 档 */
+  font-weight: var(--font-weight-semibold);
+}
+.facts-panel-count {
+  font-size: var(--font-size-xs);
+  color: var(--color-placeholder);
+  background: var(--color-soft);
+  border-radius: 999px;
+  padding: 0 var(--space-1);
+}
+.facts-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.facts-panel-empty {
+  color: var(--color-placeholder);
+  font-size: var(--font-size-lg);
+  text-align: center;
+  padding: var(--space-4);
+}
+/* 加载骨架（2026-08-18 批次 4）：模拟 fact-item 形状（标题条 + 两子要点条） */
+.facts-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-2);
+}
+.facts-skeleton-item {
+  display: flex;
+  flex-direction: column;
+}
+.facts-group {
+  margin-bottom: 0;
+}
+.facts-group-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-muted);
+  margin-bottom: var(--space-1);
+}
+.facts-panel-foot {
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border-light);
+}
+.facts-add {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border-light);
+  align-items: center;
+  /* 分类下拉固定槽宽：给标题输入框留出稳定的剩余宽度，分类词长短不一也不抖。 */
+}
+
+/* ---------------------------------------------------------------------------
+   事实条目（FactItem，2026-08-18 批次 1）：FactsPanel + 抽取卡共用。
+   双态：显示态纯文本（连接线 + hover 浮标）/ 编辑态多行 autosize（树杈插入 + 幽灵末行）。
+   --------------------------------------------------------------------------- */
+.fact-item {
+  position: relative;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  margin-bottom: var(--space-2);
+  background: var(--color-soft);
+}
+/* 头部：标题 + 浮右上操作（编辑/删除），hover 才浮现、不占独立行 */
+.fact-item-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.fact-item-title {
+  --fact-title-actions-reserve: 84px;
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+  /* 右侧给浮标预留位，防长标题被压（3 个浮标：上简历/编辑/删除）。
+     84px = 浮标区实测宽度（3×20px 图标钮 + 间距），下方 .fact-item-actions 宽度与之联动，改一处要同时改。 */
+  padding-right: var(--fact-title-actions-reserve);
+}
+/* 不上简历提示（ADR 0011）：标题下的一行弱提示，说明这条不会写进简历 */
+.fact-item-off-resume {
+  margin-top: var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+}
+.fact-item-actions {
+  position: absolute;
+  /* B 方案（不占位悬浮）：top 对齐标题文字行中心。
+     标题 font-sm(12px)×line-normal(1.5)≈18px 行高；26px 图标钮垂直居中于首行文字：
+     top = 卡片padding(space-2) + (18-26)/2 ≈ space-2 - 4px。 */
+  top: calc(var(--space-2) - 4px);
+  right: var(--space-1);
+  display: flex;
+  gap: var(--space-1);
+  opacity: 0;
+  transition: opacity 0.2s var(--ease-out);
+  /* 半透明底，压文字上也能看清 */
+  background: var(--glass-bg);
+  border-radius: var(--radius-sm);
+}
+.fact-item:hover .fact-item-actions {
+  opacity: 1;
+}
+
+/* 父子连接线（沿用抽取卡树干：左侧竖线贯穿 + 每个子要点横枝 + 圆点） */
+.fact-child-list {
+  position: relative;
+  margin: var(--space-1) 0 0 var(--space-2);
+  padding-left: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  list-style: none;
+}
+.fact-child-list::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.15rem;
+  bottom: 0.25rem;
+  width: 1.5px;
+  background: var(--color-primary);
+  opacity: 0.35;
+}
+.fact-child {
+  position: relative;
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  line-height: var(--line-height-normal);
+  word-break: break-word;
+}
+.fact-child::before {
+  content: '';
+  position: absolute;
+  left: calc(-1 * var(--space-3) + 0.05rem);
+  top: 0.6em;
+  width: 0.6rem;
+  height: 1.5px;
+  background: var(--color-primary);
+  opacity: 0.35;
+}
+.fact-child::after {
+  content: '';
+  position: absolute;
+  left: calc(-1 * var(--space-3) + 0.05rem);
+  top: 0.6em;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  opacity: 0.6;
+}
+
+/* 编辑态 */
+.fact-item.is-editing {
+  background: var(--color-panel);
+  border-color: var(--color-border);
+}
+.fact-input {
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+.fact-title-input {
+  font-weight: var(--font-weight-medium);
+  margin-bottom: var(--space-1);
+}
+/* 编辑态子要点行：Textarea + 删除钮（hover 浮现）+ 树杈插入钮 */
+.fact-child-edit {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+.fact-child-edit .fact-input {
+  flex: 1;
+  min-width: 0;
+}
+.fact-child-del {
+  flex: none;
+  opacity: 0;
+  transition: opacity 0.2s var(--ease-out);
+}
+.fact-child-edit:hover .fact-child-del {
+  opacity: 1;
+}
+/* 树杈插入钮：骑在本条与下一条之间的连接线上，hover 整行时浮现 */
+/* Mantine default 钮（size=compact-xs）：只覆盖「树杈中间悬浮圆点」这个几何
+   （绝对定位 + 16px 正圆 + 默认透明待 hover 浮现）。 */
+.fact-child-insert {
+  position: absolute;
+  left: calc(-1 * var(--space-3) - 7px);
+  bottom: -9px;
+  z-index: 2;
+  --button-height: 16px !important;
+  width: 16px;
+  padding: 0;
+  border-radius: 50%;
+  border-color: var(--color-border);
+  color: var(--color-primary-active);
+  opacity: 0;
+  transition: opacity 0.2s var(--ease-out);
+  padding: 0;
+}
+.fact-child-edit:hover .fact-child-insert {
+  opacity: 1;
+}
+.fact-child-insert:hover {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  border-color: var(--color-primary);
+}
+/* 幽灵末行：垫底的空输入框，弱化（虚线边）示意"可续写" */
+.fact-child-edit.is-ghost .fact-input {
+  border-style: dashed;
+  border-color: var(--color-border);
+  background: transparent;
+}
+.fact-item-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+
+/* ---------------------------------------------------------------------------
+   聊天框顶部工具条（2026-08-08）：优化点 + 资料集统一「标签 pill」，放 chat-panel-head 内右对齐。
+   --------------------------------------------------------------------------- */
+.chat-tools {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+/* 工具条触发钮（2026-08-24：弃手写 .tool-tab 重按钮，改 Mantine subtle 幽灵钮，见 ToolTab.tsx）。
+   只留：幽灵钮里图标与文字的间距、active 态、计数/角标样式（按钮本体样式已随 Mantine 走）。 */
+.tool-tab-btn {
+  position: relative; /* 角标绝对定位参照 */
+  overflow: visible; /* 角标探出右上边缘，不许裁（2026-08-24 修资料集角标被边框遮挡） */
+}
+/* 「第N稿」幽灵钮：默认跟随幽灵钮本色（ink 灰），hover / 选中（open）时变绿（2026-08-24）。
+   绿色取面板里版本 chip 的同款 --color-primary-active(#15803d，比主色 #22c55e 深一档），
+   不用更亮的 --color-primary——前者是面板内「第N稿」实际在用的绿，两处才一致。
+   主题层 subtle 用文字色是内联 style（alger.ts），权重高于普通类，需 !important 盖过。
+   选中态保持透明背景（不要 light 灰底）——幽灵钮展开后不该冒出一圈灰。 */
+.tool-tab-btn-ghost:hover,
+.tool-tab-btn-ghost.is-open {
+  color: var(--color-primary-active) !important;
+}
+.tool-tab-btn-ghost.is-open {
+  background: transparent !important;
+}
+.tool-tab-count {
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-muted);
+  background: var(--color-soft);
+  border-radius: 999px;
+  padding: 0 var(--space-1);
+  min-width: 14px;
+  text-align: center;
+}
+/* 右上角标（2026-08-12 角标：数量 + 优先级颜色）——绝对定位在标签右上。
+   参照容器是 .tool-tab-btn（Mantine Button，relative）。
+   2026-08-24：按钮整体变小一号后角标也收小（18→14px、字号 11→10、字重 bold→semibold），
+   描边 2px→1.5px——原大角标压在小按钮上显得头重脚轻。 */
+.tool-tab-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-on-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  box-shadow: 0 0 0 1.5px var(--color-panel); /* 角标描边用面板底色 */
+}
+.badge-red {
+  background: var(--color-error);
+}
+.badge-blue {
+  background: var(--color-info);
+}
+.badge-green {
+  background: var(--color-primary);
+}
+.badge-gray {
+  background: var(--color-muted);
+}
+/* 标签容器：relative，供浮窗定位参照 */
+.tool-tab-wrap {
+  position: relative;
+}
+/* 共享浮窗（ToolTab 展开）：默认 fixed 相对视口（inline top/left 由组件算）——
+   脱离容器 overflow 裁切；工具经 panelClassName 覆写尺寸。 */
+.tool-panel {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 悬浮改进卡片（1.2，建议收件箱）——ToolTab 标签形态，面板尺寸覆写。
+   2026-08-13 高度：固定 75vh（用户验证"75vh 正好"，不设 min/max 伸展上下限）。
+   之前改用 calc(100vh-150px) 是错的——它比 75vh 高（>600px 窗口下多探一截），
+   面板底把聊天输入框（约 62px 高）盖住了。 */
+.suggestion-panel {
+  height: 75vh;
+  overflow: hidden;
+  /* 2026-08-13 层叠修复：fixed 浮窗不设 z-index 会被聊天输入框（Mantine Textarea 层叠更高）
+     盖住。与资料集浮窗同层 z-index:60，盖过输入框。 */
+  z-index: 60;
+}
+.suggestion-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--color-border-light);
+  flex: none;
+}
+.suggestion-panel-title {
+  font-size: var(--font-size-lg); /* 2026-08-24：面板内标题与顶条标题同档（13.5px），不用 15px */
+  font-weight: var(--font-weight-semibold);
+}
+.suggestion-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  /* 滚动条走全局窄滚动条规则（6px hover 显示），此处不重复 */
+}
+.suggestion-item {
+  border-radius: var(--radius-sm);
+}
+.suggestion-item-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-ink);
+  font-size: var(--font-size-lg);
+}
+.suggestion-item-row:hover {
+  background: var(--color-soft);
+}
+.suggestion-detail {
+  padding: var(--space-2) var(--space-2) var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  border-left: 2px solid var(--color-border-light);
+  margin-left: var(--space-2)
+}
+.suggestion-detail-line {
+  display: flex;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+}
+.suggestion-detail-label {
+  color: var(--color-placeholder);
+  flex: none;
+  width: 2em;
+}
+.suggestion-detail-text.strikethrough {
+  text-decoration: line-through;
+  color: var(--color-placeholder);
+}
+.suggestion-detail-text {
+  color: var(--color-ink);
+}
+.suggestion-detail-reason {
+  font-size: var(--font-size-xs);
+  color: var(--color-placeholder);
+}
+.suggestion-panel-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-3);
+  border-top: 1px solid var(--color-border-light);
+  flex: none;
+}
+/* 四栏面板（2026-08-12：待定/已确认/正在聊/已拒绝；淡色半透明分栏 + 默认展开 + 撤回）
+   2026-08-13：面板加宽 880px；左右 1:1（左待定 / 右三态组等宽）。 */
+.suggestion-panel {
+  width: 880px;
+}
+.suggestion-panel-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+.suggestion-col-group {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0; /* 2026-08-13 滚动修复：flex 子项不压缩则内部列表 overflow 不触发，底部内容被裁 */
+  flex-direction: column;
+  gap: 0;
+}
+.suggestion-col {
+  flex: 1;
+  min-width: 0;
+  min-height: 0; /* 2026-08-13 滚动修复：同上，列内列表独立滚动 */
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--color-border-light);
+}
+/* 左栏内：待定 3 / 已拒绝 1（2026-08-13：已拒绝挪到左下，右栏腾空间） */
+.suggestion-col-pending {
+  flex: 3;
+}
+.suggestion-col-rejected {
+  flex: 1;
+}
+.suggestion-col-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-ink);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border-light);
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  line-height: var(--line-height-normal); /* 原 --line-height-sm 未定义（无此档），2026-08-18 批次 3 修 */
+}
+.suggestion-col-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex: none;
+}
+.dot-red {
+  background: var(--color-error);
+}
+.dot-green {
+  background: var(--color-primary);
+}
+.dot-blue {
+  background: var(--color-info);
+}
+.dot-gray {
+  background: var(--color-muted);
+}
+.suggestion-col-count {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-muted);
+}
+/* 换栏后目标栏计数 pulse（2026-08-18 批次 4 §9.4 确认微反馈）：
+   数字"接住"新落位的卡片——轻缩放回弹一次，克制不喧宾。 */
+.suggestion-col-count.pulse {
+  animation: col-count-pulse 0.4s var(--ease-out);
+}
+@keyframes col-count-pulse {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.35); color: var(--color-ink); }
+  100% { transform: scale(1); }
+}
+.suggestion-col-empty {
+  color: var(--color-placeholder);
+  font-size: var(--font-size-sm);
+  text-align: center;
+  padding: var(--space-3);
+}
+/* 分栏背景：淡色半透明（红/绿/蓝/灰） */
+.suggestion-col-pending {
+  background: var(--color-error-soft);
+}
+.suggestion-col-confirmed {
+  background: var(--color-success-soft);
+}
+.suggestion-col-discussing {
+  background: var(--color-info-soft);
+}
+.suggestion-col-rejected {
+  background: var(--color-soft);
+}
+/* 统一建议卡（2026-08-13：左右栏 + 聊天提议卡共用，治"左右显示不一致"）。
+   元素序：sev 点 + type 徽标 + target（在哪/作用域）+ 原文划线 → 新改法 + reason + 动作区 */
+.suggestion-card {
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  background: var(--glass-bg);
+  border: 1px solid var(--color-border-light);
+}
+.suggestion-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+/* 收起/展开按钮（2026-08-13）：卡头右侧 ▾/▴ 独立按钮。
+   Mantine subtle 钮（size=compact-xs），只覆盖 20px 方 + 顶到卡头右端。 */
+.suggestion-toggle {
+  --button-height: 20px !important;
+  width: 20px;
+  margin-left: auto;
+  flex: none;
+  color: var(--color-muted);
+}
+.suggestion-toggle:hover {
+  background: var(--color-soft);
+  color: var(--color-ink);
+}
+/* 收起态：两行（target 一行 + 改法截断一行），grill 2026-08-13 */
+.suggestion-card.collapsed .suggestion-card-head {
+  border-bottom: none;
+}
+.suggestion-card-preview {
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.suggestion-card-body {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+  word-break: break-word;
+}
+.suggestion-card-original {
+  color: var(--color-muted);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.suggestion-card-arrow {
+  color: var(--color-placeholder);
+  flex: none;
+}
+.suggestion-card-suggested {
+  color: var(--color-ink);
+  font-weight: var(--font-weight-medium);
+}
+.suggestion-card-reason {
+  font-size: var(--font-size-xs);
+  color: var(--color-placeholder);
+}
+.suggestion-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.suggestion-card-wrap {
+  border-radius: var(--radius-sm);
+}
+/* 四栏换栏两段式微反馈（2026-08-18 批次 4 §9.4）：
+   leaving=源栏卡片淡出+微下移（"沉下去被收走"），entering=目标栏卡片淡入+微上移（"浮上来归位"）。
+   仅建议面板这四栏用；其他确认动作不做物理滑动。 */
+.suggestion-card-wrap.leaving {
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.18s var(--ease-out), transform 0.18s var(--ease-out);
+}
+.suggestion-card-wrap.entering {
+  animation: suggestion-enter 0.24s var(--ease-out);
+}
+@keyframes suggestion-enter {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.suggestion-item-type {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-muted);
+  background: var(--color-soft);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  flex: none;
+}
+.suggestion-item-target {
+  color: var(--color-ink);
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.suggestion-sev {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex: none;
+}
+.sev-high {
+  background: var(--color-error);
+}
+.sev-medium {
+  background: var(--color-warning);
+}
+.sev-low {
+  background: var(--color-primary);
+}
+/* .suggestion-action-accept/reject/discuss 已删（2026-08-18 批次 2）——
+   三处使用方（SuggestionBasket/ProposalCard/ConflictCard）全迁 Mantine Button。
+   建议卡三动作配色 = 目标栏色 light 版（§10.3）；聊天卡动作用 L1 filled / L3 subtle（§10.2）。 */
+/* 右栏已定论行（已确认/正在聊/已拒绝共用）：统一建议卡 + 撤回 */
+.suggestion-list-right {
+  max-height: none;
+}
+/* Mantine subtle 钮（size=compact-xs）：只覆盖 22px 方。 */
+.suggestion-retract {
+  --button-height: 22px !important;
+  width: 22px;
+  flex: none;
+  color: var(--color-muted);
+}
+.suggestion-retract:hover {
+  background: var(--color-soft);
+  color: var(--color-ink);
+}
+
+/* 1.3 生成：空态按钮 + 生成态确认条 */
+.resume-empty-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3)
+}
+/* 空态底部提示：也可以通过聊天生成简历（无上传时引导走聊天） */
+.resume-empty-chat-hint {
+  margin-top: var(--space-2);
+  max-width: 260px;
+  text-align: center;
+  font-size: var(--font-size-lg);
+  color: var(--color-muted);
+  line-height: var(--line-height-relaxed);
+}
+.generate-actions {
+  position: absolute;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: var(--space-2);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: 0.75rem;
+  padding: var(--space-2) var(--space-3);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+  z-index: 5;
+}
+
+/* PDF 预览（react-pdf） */
+.pdf-preview {
+  height: 100%;
+  width: 100%;
+  overflow-y: auto;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3)
+}
+.pdf-loading {
+  color: var(--color-muted);
+  font-size: var(--font-size-lg);
+  padding: var(--space-3)
+}
+.pdf-page {
+  background: var(--color-panel);
+  box-shadow: var(--shadow-card);
+  border-radius: 4px;
+  overflow: hidden;
+  /* 预览框是一个整体（2026-08-24）：单页铺满栏宽（连续滚动多页），
+     不再限 820px 缩成中间小条。 */
+  width: 100%;
+  max-width: 100%;
+}
+.pdf-page canvas {
+  display: block;
+  max-width: 100%;
+  height: auto !important;
+}
+.pdf-page-num {
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--color-placeholder);
+  padding: var(--space-1) 0;
+  background: var(--color-canvas);
+}
+
+/* 左栏文本预览（TXT/MD 原生 / DOCX·PPTX 等 Markdown 兜底）——流式内容，铺满栏宽。
+   白底（2026-08-24 统一）：与 HTML 简历一致——预览框内任何格式都是白纸整体，
+   灰凹槽（canvas）只留给空态/拖拽上传。 */
+.resume-preview-text {
+  height: 100%;
+  width: 100%;
+  overflow-y: auto;
+  padding: var(--space-4);
+  font-size: var(--font-size-lg);
+  line-height: var(--line-height-loose);
+  color: var(--color-ink);
+  background: var(--color-panel);
+}
+.resume-preview-empty {
+  color: var(--color-placeholder);
+  padding: var(--space-4)
+}
+
+/* 左栏 HTML 预览（iframe + blob URL 原生渲染，sandbox 禁脚本） */
+.resume-preview-html {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.resume-preview-html iframe {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: none;
+  background: var(--color-panel);
+  /* 预览框 = 一个整体（2026-08-24 反馈）：iframe 铺满，不开小窗。
+     A4 保真由排版层 .a4-sheet 自理（210mm + margin:auto，纸在 iframe 内居中，
+     栏再宽纸也不变形——前端无需限宽/阴影/圆角/边距，那些会把框割裂成小窗）。 */
+}
+.resume-preview-loading {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-placeholder);
+  background: var(--color-canvas);
+  z-index: 1;
+}
+
+/* A4 分页辅助线已改为画进 iframe 文档（2026-09-02）：线的样式在 HtmlPreview.tsx 的 drawGuides 里
+   内联生成（插进预览 blob 的 DOM，不落库、不进导出）。原外层 overlay 的 .page-guides 系列删除——
+   外层 overlay 追不上 iframe 内部滚动，线停在可视区外看不见。 */
+
+
+.facts-add-category {
+  width: 110px;
+  flex: none;
+}

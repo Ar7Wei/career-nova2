@@ -1,0 +1,221 @@
+{# 简历固定模板（两栏版式，忠实复刻参考项目 resume-builder 的 template.pug 结构）
+   2026-08-28 排版转向（docs/adr/0004）：LLM 退出排版，本模板确定性遍历 resume JSON 字段。
+   数据语义命名（work/skills/…），方位（header/left/right）由 render.py 按 layout 映射表
+   预分组后传入——调顺序改 layout 数据，不动本模板。
+   scale 只进 :root 的 --scale，所有字号 calc(px * var(--scale)) 阶梯缩放，不丢内容。
+   注意：宏必须定义在调用之前（Jinja2 顺序求值），故宏块全在文件顶、body 在末。
+   注意：summary/description/highlights 是纯文本（生成层吐纯文本，非 markdown），直接转义输出。
+#}
+{%- macro render_basics() %}
+<div class="basics">
+  <div class="table padding-bottom-container-2">
+    <div class="main">
+      <span class="name">{{ resume.basics.name }}</span>
+      <span class="label">{{ resume.basics.label }}</span>
+    </div>
+    <div class="side">
+      <ul class="contact">
+        {%- if resume.basics.phone %}
+        <li class="margin-text-2 contact-item"><span class="icon-left icon-muted">☎</span><span class="text-right contact-highlight">{{ resume.basics.phone }}</span></li>
+        {%- endif %}
+        {%- if resume.basics.email %}
+        <li class="margin-text-2 contact-item"><span class="icon-left icon-muted">✉</span><span class="text-right contact-highlight">{{ resume.basics.email }}</span></li>
+        {%- endif %}
+        {%- if resume.basics.location and resume.basics.location.city %}
+        <li class="margin-text-2 contact-item"><span class="icon-left icon-muted">⌂</span><span class="text-right">{{ resume.basics.location.city }}</span></li>
+        {%- endif %}
+      </ul>
+    </div>
+  </div>
+  {%- if resume.basics.summary %}
+  <div class="summary padding-container-2">{{ resume.basics.summary }}</div>
+  {%- endif %}
+</div>
+{%- endmacro %}
+
+{%- macro render_work() %}
+{%- if resume.work %}
+<div class="work margin-container-4">
+  <p class="section-title no-alone-2">工作经历</p>
+  <div class="container">
+    {%- for item in resume.work %}
+    <div class="article margin-container-3">
+      <div class="header no-alone-1">
+        <div class="table">
+          <div class="left">
+            <span class="title">{{ item.position }}</span>
+            <span class="subtitle margin-text-1">{{ item.name }}{% if item.location %} · {{ item.location }}{% endif %}</span>
+          </div>
+          <div class="right">
+            <span class="date">{{ item.startDate }}{% if item.endDate %} - {{ item.endDate }}{% endif %}</span>
+          </div>
+        </div>
+      </div>
+      {%- if item.summary %}
+      <div class="summary margin-text-4">{{ item.summary }}</div>
+      {%- endif %}
+      {%- if item.highlights %}
+      <ul class="highlights margin-text-4 no-break">
+        {%- for h in item.highlights %}<li>{{ h }}</li>{% endfor %}
+      </ul>
+      {%- endif %}
+    </div>
+    {%- endfor %}
+  </div>
+</div>
+{%- endif %}
+{%- endmacro %}
+
+{%- macro render_projects() %}
+{%- if resume.projects %}
+<div class="projects margin-container-4">
+  <p class="section-title no-alone-2">项目经历</p>
+  <div class="container">
+    {%- for item in resume.projects %}
+    <div class="article margin-container-3">
+      <div class="header no-alone-1">
+        <div class="table">
+          <div class="left">
+            <span class="title">{{ item.roles | join(' | ') }}</span>
+            <span class="subtitle margin-text-1">{{ item.name }}</span>
+          </div>
+          <div class="right">
+            <span class="date">{{ item.startDate }}{% if item.endDate %} - {{ item.endDate }}{% endif %}</span>
+          </div>
+        </div>
+      </div>
+      {%- if item.description %}
+      <div class="summary margin-text-4">{{ item.description }}</div>
+      {%- endif %}
+      {%- if item.highlights %}
+      <ul class="highlights margin-text-4 no-break">
+        {%- for h in item.highlights %}<li>{{ h }}</li>{% endfor %}
+      </ul>
+      {%- endif %}
+    </div>
+    {%- endfor %}
+  </div>
+</div>
+{%- endif %}
+{%- endmacro %}
+
+{%- macro render_education() %}
+{%- if resume.education %}
+<div class="education margin-container-4">
+  <p class="section-title no-alone-1">教育背景</p>
+  <div class="container">
+    {%- for item in resume.education %}
+    <div class="article margin-container-2 no-break">
+      <div class="title">{{ [item.studyType, item.area] | select | join(' | ') }}</div>
+      <span class="institution margin-text-2">{{ item.institution }}</span>
+    </div>
+    {%- endfor %}
+  </div>
+</div>
+{%- endif %}
+{%- endmacro %}
+
+{%- macro render_skills() %}
+{%- if resume.skills %}
+<div class="skills margin-container-4">
+  <p class="section-title no-alone-1">编程工具</p>
+  <div class="container">
+    {%- for group in resume.skills %}
+    <div class="article no-break">
+      <span>{{ group.name }}</span>
+      {%- if group.keywords %}
+      <ul class="margin-text-2">
+        {%- for kw in group.keywords %}<li>{{ kw }}</li>{% endfor %}
+      </ul>
+      {%- endif %}
+    </div>
+    {%- endfor %}
+  </div>
+</div>
+{%- endif %}
+{%- endmacro %}
+
+{%- macro render_certificates() %}
+{%- if resume.certificates %}
+<div class="certificates margin-container-4">
+  <p class="section-title no-alone-1">工作技能</p>
+  <div class="container">
+    {%- for item in resume.certificates %}
+    <div class="article margin-container-2 no-break">
+      <span class="name">{{ item.name }}</span>
+      <span class="issuer margin-text-2">{{ item.issuer }}</span>
+    </div>
+    {%- endfor %}
+  </div>
+</div>
+{%- endif %}
+{%- endmacro %}
+
+{%- macro render_languages() %}
+{%- if resume.languages %}
+<div class="languages margin-container-4 no-break">
+  <p class="section-title no-alone-1">语言</p>
+  <ul>
+    {%- for item in resume.languages %}
+    <li class="article margin-text-2">{{ item.language }}{% if item.fluency %}：{{ item.fluency }}{% endif %}</li>
+    {%- endfor %}
+  </ul>
+</div>
+{%- endif %}
+{%- endmacro %}
+
+{%- macro render_interests() %}
+{%- if resume.interests %}
+<div class="interests margin-container-4 no-break">
+  <p class="section-title no-alone-1">业余生活</p>
+  <ul>
+    {%- for item in resume.interests %}
+    <li class="article margin-text-2">{{ item.name }}{% if item.detail %}：{{ item.detail }}{% endif %}</li>
+    {%- endfor %}
+  </ul>
+</div>
+{%- endif %}
+{%- endmacro %}
+
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>Resume-{{ resume.basics.name }}</title>
+  <style>:root { {{ typography.to_css_vars() }}; }</style>
+  {# css 是模板自带的静态样式（非用户输入），用 | safe 原样注入：autoescape 会把 > " 转成
+     &gt; &#34;，浏览器按原文读 <style> 不反转义 → 子代选择器/竖分割线/圆点全失效（错位 bug）。#}
+  <style>{{ css | safe }}</style>
+</head>
+<body>
+  <div class="content">
+    {%- for block in header_blocks %}{% if block == 'basics' %}{{ render_basics() }}{% endif %}{% endfor %}
+    <div class="table padding-top-container-2">
+      <div class="main">
+        {%- for block in left_blocks %}
+        {%- if block == 'work' %}{{ render_work() }}
+        {%- elif block == 'projects' %}{{ render_projects() }}
+        {%- elif block == 'education' %}{{ render_education() }}
+        {%- elif block == 'skills' %}{{ render_skills() }}
+        {%- elif block == 'certificates' %}{{ render_certificates() }}
+        {%- elif block == 'languages' %}{{ render_languages() }}
+        {%- elif block == 'interests' %}{{ render_interests() }}
+        {%- endif %}
+        {%- endfor %}
+      </div>
+      <div class="side">
+        {%- for block in right_blocks %}
+        {%- if block == 'work' %}{{ render_work() }}
+        {%- elif block == 'projects' %}{{ render_projects() }}
+        {%- elif block == 'education' %}{{ render_education() }}
+        {%- elif block == 'skills' %}{{ render_skills() }}
+        {%- elif block == 'certificates' %}{{ render_certificates() }}
+        {%- elif block == 'languages' %}{{ render_languages() }}
+        {%- elif block == 'interests' %}{{ render_interests() }}
+        {%- endif %}
+        {%- endfor %}
+      </div>
+    </div>
+  </div>
+</body>
+</html>

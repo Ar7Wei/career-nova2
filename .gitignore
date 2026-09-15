@@ -1,0 +1,81 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Virtual env / uv
+.venv/
+venv/
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+
+# Type / lint cache
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Node
+node_modules/
+
+# 打包产物（PyInstaller / electron-builder；可重生，统一由 CI 产出）
+# build/ 是 PyInstaller 工作目录（中间缓存 + 把本机绝对路径写进 .toc），绝不入库。
+dist/
+build/
+release/
+out/
+asar-x/
+*.spec.bak
+
+# Runtime data & logs
+data/
+*.db
+*.db-journal
+logs/
+*.log
+
+# Tests — 本地保留，不发布（开源仓库不公开测试及其配置）
+tests/
+*.test.ts
+*.test.tsx
+*.test.js
+*.test.cjs
+*.test.mjs
+*.spec.*
+__tests__/
+frontend/src/test/
+frontend/vitest.config.ts
+electron/vitest.config.mjs
+htmlcov/
+coverage/
+
+# Claude Code（本地配置/凭证）
+.claude/
+CLAUDE.md
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+
+# doc — CONTEXT.md 在仓库根，不在此白名单内（根目录无忽略规则，天然公开）
+# docs/ 白名单：默认整个 docs/ 不公开，只放行下面这些「对外有意义的文档」。
+# 不公开的：docs/adr/（设计过程留底）、FRAMEWORK.md（内部进度表）、其余散装文件。
+# ⚠️ git 规则：被排除的目录不再进入，其下的 `!` 反排除无效。
+#    故用 `docs/*`（排除子项、不排除目录本身）+ 逐条 `!` 放行；
+#    docs/design/ 同理需两级（先 `!docs/design/` 再 `!docs/design/xxx.md`）。
+#    新增公开文档时照抄此结构，否则文档会静默不入库。
+docs/*
+!docs/API.md
+!docs/DATABASE.md
+!docs/frontend-styles.md
+!docs/design/
+docs/design/*
+!docs/design/apply.md
+!docs/design/resume.md
+

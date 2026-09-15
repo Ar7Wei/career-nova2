@@ -1,0 +1,131 @@
+/* ---------------------------------------------------------------------------
+   设置面板：左分组导航 + 右侧「标题+描述+控件」行
+   --------------------------------------------------------------------------- */
+/* 页面根容器：占满可用高度（.app-main 有 24px padding，此层 100% 与投递页 .apply-layout
+   直接子元素同构）。必须有确定高度，下面 .settings-layout 的 height:100% 才有参照，
+   否则退回整页滚动、左栏不固定。 */
+.settings-page {
+  height: 100%;
+}
+.settings-layout {
+  display: grid;
+  grid-template-columns: var(--spacing-subnav) 1fr;
+  gap: var(--space-5);
+  align-items: start;
+  /* 占满可用高度（同简历/投递页），由右栏内部滚动——顶部 24px 上边距
+     不随滚动冲掉，与其它页面一致（而非整页滚、内容滚到贴 TitleBar）。 */
+  height: 100%;
+  min-height: 0;
+}
+/* 二级导航：标题+副标题缩进左栏（与投递页一致）。布局已 height:100% 固定不滚，
+   无需 sticky（与投递页 .apply-nav 同构）。 */
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.settings-nav-item {
+  /* Mantine Button variant="subtle" 只覆盖形状：整宽左对齐的一栏式导航项（Mantine 无此形态）。
+     不能用 <a href="#…">——HashRouter 下锚点 hash 会被当路由路径 → 白屏，必须 onClick + scrollIntoView。 */
+  width: 100%;
+  height: auto;
+  justify-content: flex-start;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  font-size: var(--font-size-md); /* 2026-08-23：二级导航同样 14px + 加粗，与一级导航一致 */
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-muted);
+}
+.settings-nav-item:hover {
+  background: var(--color-soft);
+  color: var(--color-ink);
+}
+.settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  /* 右栏内部滚动：内容多时在这栏内滚，顶部上边距恒定（同投递页 .apply-body/.apply-list）。 */
+  overflow-y: auto;
+}
+.settings-group h2 {
+  font-size: var(--font-size-title); /* 2026-08-18 批次 3：区段标题 15px title 档 */
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-ink);
+  margin-bottom: var(--space-1)
+}
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--color-border-light);
+}
+.setting-row:last-child {
+  border-bottom: none;
+}
+.setting-text {
+  min-width: 0;
+}
+.setting-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-medium);
+}
+.setting-desc {
+  font-size: var(--font-size-lg);
+  color: var(--color-muted);
+  margin-top: var(--space-1);
+}
+.setting-control {
+  flex: none;
+  width: 240px;
+}
+/* 悬浮在输入框内的附属元素（chip 徽标 / 线条 icon 按钮）：
+   Mantine rightSection 渲染进输入框右侧，这里只做右边距微调，让它不贴边。 */
+.input-affix {
+  margin-right: var(--space-1);
+}
+/* API Key 行：输入框撑满控件列；type=password 自带掩码（不再套 PasswordInput 双层保密） */
+.setting-control .api-key-input {
+  flex: 1;
+  min-width: 0;
+}
+.setting-control input,
+.setting-control select {
+  margin-bottom: 0
+}
+/* 未探测/未连接时的禁用视觉：灰化 + 禁用手势，但仍可见已存模型名 */
+select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--color-soft, #f1f3f5);
+}
+
+/* 设置页统一提示行：小字中性，可选状态色（轻量内联，不铺底色）。
+   覆盖：端口重启提示、需先配 key、已拉取模型列表、探测结果 ok/partial/fail。 */
+.hint-inline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-tight);
+  color: var(--color-muted);
+}
+.hint-inline svg {
+  flex: none;
+}
+.hint-ok {
+  color: var(--color-success);
+}
+.hint-warn {
+  color: var(--color-warning);
+}
+.hint-error {
+  color: var(--color-error);
+}
+

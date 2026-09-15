@@ -1,0 +1,29 @@
+/* ===========================================================================
+   Career Nova — 全局样式编排（借鉴 AlgerMusicPlayer，单主题 light）
+   主色绿 #22c55e + light 灰阶；玻璃拟态弹层；柔和圆角阴影。
+   颜色一律走 CSS 变量（供自绘 CSS 与内联 var() 使用）。
+   Mantine 组件主题见 src/theme/alger.ts（自绘部分走 --color-* 变量，两轨同源）。
+
+   物理结构（2026-08-24 拆分）：本文件只做编排，实际样式分层在 styles/——
+   - 地基（全局共享，永远一起加载，是"唯一真相源"的物理体现）：
+       base.css        设计 token(:root) + reset/body + 全局滚动条 + 过渡曲线
+       primitives.css  产品级通用件 card/chip/表格/空态/glass/页头/状态点
+       layout.css      布局骨架 app-shell / TitleBar / Sidebar / StatusBar
+   - 页面（只一个页面用的类，归各自文件）：
+       resume.css      简历页 + 聊天框 + 抽取卡 + 预览 + facts/suggestion
+       settings.css    设置面板
+       apply.css       投递页（岗位聚合）
+   归层规则（语义优先）：跨页面的"通用件"进地基，绑定具体页面结构的类归页面；
+   位置稳定，不随引用计数来回搬。被第二页真正复用时才考虑上提为原语。
+   待办：.chat-panel 等聊天框语义上是产品级通用件（Chatter 页即聊天），将来上提 primitives。
+   =========================================================================== */
+
+/* 地基三层（顺序敏感：base 定义 token，primitives/layout 消费） */
+@import './styles/base.css';
+@import './styles/primitives.css';
+@import './styles/layout.css';
+
+/* 页面层 */
+@import './styles/resume.css';
+@import './styles/settings.css';
+@import './styles/apply.css';

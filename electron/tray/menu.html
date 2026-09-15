@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<!-- 托盘自绘菜单：独立透明窗口加载本文件（不走前端构建，样式独立内联）。
+     与前端 index.css 双轨同值：颜色/圆角/字号 token 手写一致，改样式需两处一起改。 -->
+<style>
+  :root {
+    --color-panel: #ffffff;
+    --color-ink: #212529;
+    --color-border: #dee2e6;
+    --color-primary-soft: rgba(34, 197, 94, 0.12);
+    --color-primary-active: #15803d;
+    --radius-lg: 14px;
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  /* height:100% + overflow:hidden：让 .menu 的 height:100% 生效（= 窗口高），
+     并禁掉 body 滚动条——否则内容比窗口略高 1-2px 时会出现"滑不动"的竖滚轮。 */
+  html, body {
+    background: transparent;
+    height: 100%;
+    overflow: hidden;
+  }
+  body {
+    font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+  }
+  /* 菜单容器：纯白卡片 + 细边 + 圆角（贴合应用 .card；透明窗做不出 backdrop 毛玻璃） */
+  .menu {
+    width: 100%;
+    height: 100%;
+    background: var(--color-panel);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: 6px 0;
+    overflow: hidden;
+  }
+  .item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 34px;
+    padding: 0 12px;
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--color-ink);
+    transition: background 0.2s var(--ease-out), color 0.2s var(--ease-out);
+    white-space: nowrap;
+  }
+  .item:hover {
+    background: var(--color-primary-soft);
+    color: var(--color-primary-active);
+  }
+  .item svg { flex: none; }
+  .sep { height: 1px; margin: 4px 8px; background: rgba(0, 0, 0, 0.08); }
+</style>
+</head>
+<body>
+  <div class="menu">
+    <div class="item" id="open">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+      <span>打开主界面</span>
+    </div>
+    <div class="sep"></div>
+    <div class="item" id="quit">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+      <span>退出Career Nova</span>
+    </div>
+  </div>
+</body>
+<script>
+  // 菜单项点击 → 经 preload 桥发 IPC，主进程执行对应动作（打开主界面 / 退出）。
+  document.getElementById('open').addEventListener('click', () => window.trayMenu.action('open'));
+  document.getElementById('quit').addEventListener('click', () => window.trayMenu.action('quit'));
+
+  // 鼠标移出菜单 → 延迟 3 秒后关闭；3 秒内移回则取消（不立刻关，避免误触）。
+  let leaveTimer = null;
+  document.body.addEventListener('mouseleave', () => {
+    if (leaveTimer) clearTimeout(leaveTimer);
+    leaveTimer = setTimeout(() => window.trayMenu.close(), 3000);
+  });
+  document.body.addEventListener('mouseenter', () => {
+    if (leaveTimer) {
+      clearTimeout(leaveTimer);
+      leaveTimer = null;
+    }
+  });
+</script>
+</html>
