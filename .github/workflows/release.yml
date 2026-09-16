@@ -56,7 +56,7 @@ jobs:
           Write-Host "config.py    -> $((Get-Content app/core/config.py -Raw | Select-String 'VERSION: str = "[^"]*"' -AllMatches).Matches.Value)"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
