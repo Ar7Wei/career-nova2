@@ -1,0 +1,154 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（不含 v 前缀），如 0.1.0"
+        required: true
+        default: "0.1.0"
+      create_release:
+        description: "勾选 = 创建正式 Release；不勾 = 只打包（干跑，产物走 Artifacts）"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Build Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 版本号以 tag 为唯一真相（ADR 0021）。tag 触发时从 ref_name 剥 v；
+      # 手动触发时用输入值。写进两个文件——两处都会被运行时读取：
+      # package.json 决定安装包文件名与快捷方式，config.py 的 VERSION 被 /health 与 API 文档读。
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $v = "${{ github.ref_name }}".TrimStart("v")
+          } else {
+            $v = "${{ inputs.version }}"
+          }
+          if ($v -notmatch '^\d+\.\d+\.\d+') { throw "版本号格式不对: $v" }
+          "value=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "版本号 = $v"
+
+      - name: Stamp version into build files
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.value }}"
+          # 逐文件正则替换，不用 ConvertFrom-Json——避免重排键序、改缩进。
+          (Get-Content electron/package.json -Raw) `
+            -replace '"version":\s*"[^"]*"', "`"version`": `"$v`"" `
+            | Set-Content electron/package.json -NoNewline -Encoding utf8
+          (Get-Content app/core/config.py -Raw) `
+            -replace 'VERSION: str = "[^"]*"', "VERSION: str = `"$v`"" `
+            | Set-Content app/core/config.py -NoNewline -Encoding utf8
+          Write-Host "package.json -> $((Get-Content electron/package.json -Raw | Select-String '"version":\s*"[^"]*"' -AllMatches).Matches.Value)"
+          Write-Host "config.py    -> $((Get-Content app/core/config.py -Raw | Select-String 'VERSION: str = "[^"]*"' -AllMatches).Matches.Value)"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            electron/package-lock.json
+
+      # electron 依赖先装——下面预置 winCodeSign 缓存要用它自带的 7za.exe
+      # （用锁文件里钉死的版本，比依赖 runner 上碰巧有的系统 7z 稳）。
+      - name: Install electron dependencies
+        working-directory: electron
+        run: npm ci
+
+      # electron-builder 改 exe 资源（图标/版本/asar 完整性）必须用 winCodeSign 里的 rcedit，
+      # 所以这个下载绕不开——noop 签名脚本只能跳过「签名」那一步，拦不住下载。
+      # winCodeSign 包里带 darwin/linux 的符号链接（给 mac/linux 签名用），默认解压需要
+      # SeCreateSymbolicLinkPrivilege，CI runner 没有 → 7-Zip 报错、electron-builder 重试到崩。
+      # 解法：自己下载 + `-snl-`（关符号链接，那些文件 Windows 打包根本用不到）解压到
+      # electron-builder 预期的规范名目录，它会直接认这个缓存、不再下载。
+      # 不用 actions/cache：现场解压约 1 秒，且免掉「缓存未命中就撞坑」的失败模式。
+      - name: Pre-seed winCodeSign cache
+        shell: pwsh
+        run: |
+          $cache = "$env:LOCALAPPDATA\electron-builder\Cache\winCodeSign"
+          New-Item -ItemType Directory -Force -Path $cache | Out-Null
+          $archive = "$cache\winCodeSign-2.6.0.7z"
+          Invoke-WebRequest -Uri "https://github.com/electron-userland/electron-builder-binaries/releases/download/winCodeSign-2.6.0/winCodeSign-2.6.0.7z" -OutFile $archive
+          & "electron\node_modules\7zip-bin\win\x64\7za.exe" x $archive "-o$cache\winCodeSign-2.6.0" -snl- -bd
+          if ($LASTEXITCODE -ne 0) { throw "winCodeSign 解压失败" }
+          Remove-Item $archive
+          Write-Host "已预置: $cache\winCodeSign-2.6.0"
+
+      - name: Install Python
+        run: uv python install
+
+      # 只装 dev 组（含 pyinstaller）。test 组刻意不装：开源树不含测试文件，
+      # 这正是 ADR 0021 的取舍「只做发布打包，不跑测试」。
+      - name: Sync backend dependencies
+        run: uv sync --frozen --group dev
+
+      - name: Build backend (PyInstaller onedir)
+        run: uv run pyinstaller backend.spec --clean
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build installer (electron-builder)
+        working-directory: electron
+        run: npm run build
+
+      - name: Collect artifacts
+        shell: pwsh
+        run: |
+          Get-ChildItem dist/installer -File | ForEach-Object {
+            Write-Host ("{0}  ({1:N1} MB)" -f $_.Name, ($_.Length / 1MB))
+          }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: career-nova-${{ steps.version.outputs.value }}-windows
+          # NSIS 安装器（Career Nova Setup *.exe）+ Portable（Career Nova *.exe）。
+          # 不带 *.blockmap——那是给自动更新做差分的，本应用用不上。
+          path: dist/installer/*.exe
+          if-no-files-found: error
+
+      # 只在 tag 推送、或手动勾了 create_release 时建正式 Release。
+      # 干跑（手动、未勾）只到上一步的 Artifacts 为止，不对外发版。
+      - name: Create GitHub Release
+        if: github.ref_type == 'tag' || inputs.create_release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = "${{ steps.version.outputs.value }}"
+          $tag = "v$v"
+          # 只挂 NSIS + Portable 两个 exe；blockmap/builder-debug.yml 不上 Release。
+          # ⚠️ 传给原生命令必须用 @assets 展开：直接 $assets 会把所有路径拼成
+          # 一个空格分隔的参数（gh 当成单个文件名），多文件时必炸。
+          $assets = @(Get-ChildItem dist/installer -File -Filter *.exe | ForEach-Object { $_.FullName })
+          if ($assets.Count -eq 0) { throw "dist/installer 下没有 .exe 产物" }
+          Write-Host "将上传 $($assets.Count) 个文件:"
+          $assets | ForEach-Object { Write-Host "  $_" }
+          gh release create $tag `
+            --title "Career Nova v$v" `
+            --generate-notes `
+            @assets
