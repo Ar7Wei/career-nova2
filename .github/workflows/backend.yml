@@ -1,0 +1,47 @@
+name: Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "backend_main.py"
+      - "backend.spec"
+      - ".github/workflows/backend.yml"
+  pull_request:
+    paths:
+      - "app/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "backend_main.py"
+      - "backend.spec"
+      - ".github/workflows/backend.yml"
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Lint & type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install
+
+      # 只装 dev 组（ruff/mypy）。test 组刻意不装：开源树里不含测试文件，
+      # 拉 pytest 进来也没东西可跑，只会让 CI 时间和锁文件多背一份无用依赖。
+      - name: Install dependencies
+        run: uv sync --frozen --group dev
+
+      - name: Ruff
+        run: uv run ruff check .
+
+      - name: Mypy
+        run: uv run mypy .

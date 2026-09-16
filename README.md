@@ -36,7 +36,7 @@ Career Nova 是一个跑在本机的求职工作台——不是 SaaS、不是多
 
 ## 下载与安装
 
-到 [**Releases**](https://github.com/Ar7Wei/career-nova/releases) 页面下载最新版本（目前仅 Windows）：
+到 [**Releases**](https://github.com/Ar7Wei/career-nova2/releases) 页面下载最新版本（目前仅 Windows）：
 
 | 文件 | 说明 |
 |---|---|
@@ -124,8 +124,8 @@ Career Nova 是一个跑在本机的求职工作台——不是 SaaS、不是多
 **前置**：[uv](https://docs.astral.sh/uv/) · Node.js 20+ · Python 3.13（uv 会自动装）
 
 ```bash
-git clone https://github.com/Ar7Wei/career-nova.git
-cd career-nova
+git clone https://github.com/Ar7Wei/career-nova2.git
+cd career-nova2
 
 # 1. 后端依赖（含测试 / 开发工具）
 uv sync --group test --group dev

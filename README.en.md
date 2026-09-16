@@ -36,7 +36,7 @@ It does *not* apply to jobs for you, and it does *not* decide where you go. **Yo
 
 ## Download & install
 
-Grab the latest build from the [**Releases**](https://github.com/Ar7Wei/career-nova/releases) page (Windows only for now):
+Grab the latest build from the [**Releases**](https://github.com/Ar7Wei/career-nova2/releases) page (Windows only for now):
 
 | File | What it is |
 |---|---|
@@ -124,8 +124,8 @@ Just double-click to launch. **No Python, Node, or uv required** — the backend
 **Prerequisites:** [uv](https://docs.astral.sh/uv/) · Node.js 20+ · Python 3.13 (uv installs it for you)
 
 ```bash
-git clone https://github.com/Ar7Wei/career-nova.git
-cd career-nova
+git clone https://github.com/Ar7Wei/career-nova2.git
+cd career-nova2
 
 # 1. Backend deps (including test / dev tools)
 uv sync --group test --group dev
