@@ -59,7 +59,14 @@ jobs:
         run: |
           $tag = "v${{ steps.version.outputs.value }}"
           gh release view $tag --json tagName 2>$null | Out-Null
-          if ($LASTEXITCODE -eq 0) {
+          # ⚠️ 先把结果存进布尔量，再显式把 $LASTEXITCODE 归零。
+          # 原因：Release 不存在时 gh 返回 1，而 PowerShell 的 if/else 不会重置
+          # $LASTEXITCODE——runner 会在脚本末尾追加
+          # `if ((Test-Path variable:\LASTEXITCODE)) { exit $LASTEXITCODE }`，
+          # 于是那个 1 会被当成整步的退出码，明明该「继续打包」却判失败。
+          $exists = ($LASTEXITCODE -eq 0)
+          $LASTEXITCODE = 0
+          if ($exists) {
             Write-Host "::$tag 的 Release 已存在，跳过打包"
             "skip=true" >> $env:GITHUB_OUTPUT
           } else {
@@ -171,7 +178,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           # 幂等：恰好被上次「建 tag 成功但建 Release 失败」留下的孤儿 tag，这里就地补上。
-          if (git ls-remote --tags origin "refs/tags/$tag") {
+          # ⚠️ 同样先存布尔量再归零 $LASTEXITCODE（tag 不存在时 ls-remote 返回非零，
+          #    会被 runner 追加的 `exit $LASTEXITCODE` 当成整步失败）。
+          $tagExists = [bool](git ls-remote --tags origin "refs/tags/$tag")
+          $LASTEXITCODE = 0
+          if ($tagExists) {
             git tag -d $tag 2>$null
             git fetch --depth=1 origin "refs/tags/$tag`:refs/tags/$tag"
             Write-Host "$tag 已存在，复用"
