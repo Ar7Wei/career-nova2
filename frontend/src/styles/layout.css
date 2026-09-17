@@ -229,22 +229,22 @@
 }
 .statusbar-text {
   color: var(--color-muted);
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
   font-weight: var(--font-weight-medium);
 }
 /* 版本号：淡落款色，与状态文字同排但更弱（是「信息」不是「状态」）。
    margin-left:auto 归模型按钮所有，这里不争——版本号跟在连接状态之后自然排布。
-   字号/字体跟整栏统一（lg + 普通字体），只靠颜色拉开层级。 */
+   字号/字体跟整栏统一（sm + 普通字体），只靠颜色拉开层级。 */
 .statusbar-version {
   color: var(--color-placeholder);
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
   margin-right: var(--space-3);
 }
 /* LLM 模型（可点击 → 跳设置页模型区）：Mantine subtle 钮；
    margin-left:auto 把状态文字留在左侧、模型顶到整列右端。无 hover 底色。
-   字号/字体跟整栏统一（lg + 普通字体），只靠颜色（落款色）区分。 */
+   字号/字体跟整栏统一（sm + 普通字体），只靠颜色（落款色）区分。 */
 .statusbar-model {
   --button-height: auto !important;
   margin-left: auto;

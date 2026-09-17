@@ -68,7 +68,7 @@ export function StatusBar() {
         <Button
           variant="subtle"
           size="compact-sm"
-          fz="var(--font-size-lg)"
+          fz="var(--font-size-sm)"
           className="statusbar-toggle"
           onClick={toggle}
           title={t(collapsed ? 'menu.expand' : 'menu.collapse')}
@@ -86,7 +86,7 @@ export function StatusBar() {
         <Button
           variant="subtle"
           size="compact-sm"
-          fz="var(--font-size-lg)"
+          fz="var(--font-size-sm)"
           className="statusbar-model"
           onClick={goToModelSettings}
           title={t('settings.llmModel')}
