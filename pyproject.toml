@@ -1,6 +1,6 @@
 [project]
 name = "career-nova"
-version = "0.1.1"
+version = "0.1.2"
 description = "Career Nova2 — 本地优先、单用户的求职桌面应用后端"
 readme = "README.md"
 requires-python = ">=3.13"

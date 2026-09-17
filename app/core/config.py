@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     PROJECT_NAME: str = "Career Nova2"
-    VERSION: str = "0.1.1"
+    VERSION: str = "0.1.2"
     DESCRIPTION: str = "Career Nova2 本地后端"
     API_V1_STR: str = "/api/v1"
     DEBUG: bool = True
