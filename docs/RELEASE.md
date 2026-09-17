@@ -58,6 +58,12 @@ npm run sync-version    # 仓库根
 
 **别手改 `uv.lock`**：同步脚本会改它（uv 的 `--frozen` 要求它与 `pyproject.toml` 版本一致）。若手工改了 `pyproject.toml` 却没同步，跑 `uv lock --check` 会报「needs to be updated」，CI 同理会因此失败。
 
+**只验打包配置、不想发版**：不必跑完整构建，单独打一个 target 即可——
+
+```bash
+cd electron && npx electron-builder --win portable --x64   # 只验文件名模板
+```
+
 ## 换下一个版本
 
 `v0.1.0` 已发过。**必须 bump 到 `v0.1.1` 才能触发**——CI 看到 `v0.1.0` 的 Release 已存在会直接跳过，不会报错（这是幂等闸门，不是故障）。
