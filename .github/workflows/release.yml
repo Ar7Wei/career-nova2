@@ -1,17 +1,20 @@
 name: Release
 
+# 触发：main 上 package.json（版本号真相源）有改动 → 打包发版。
+# 产物落 GitHub Release，由 CI 自己建 tag——不再需要手打 tag。
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+    paths:
+      - "package.json"
   workflow_dispatch:
     inputs:
       version:
-        description: "版本号（不含 v 前缀），如 0.1.0"
-        required: true
-        default: "0.1.0"
+        description: "版本号（不含 v 前缀），如 0.1.1。留空 = 只校验、不发版"
+        required: false
+        default: ""
       create_release:
-        description: "勾选 = 创建正式 Release；不勾 = 只打包（干跑，产物走 Artifacts）"
+        description: "勾选 = 建正式 Release（干跑请勿勾选）"
         type: boolean
         default: false
 
@@ -19,48 +22,52 @@ permissions:
   contents: write
 
 jobs:
-  package:
-    name: Build Windows installer
+  release:
+    name: Build & release
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
 
-      # 版本号以 tag 为唯一真相（ADR 0021）。tag 触发时从 ref_name 剥 v；
-      # 手动触发时用输入值。写进两个文件——两处都会被运行时读取：
-      # package.json 决定安装包文件名与快捷方式，config.py 的 VERSION 被 /health 与 API 文档读。
+      # 版本号唯一真相源 = 根 package.json（ADR 0022）。这条命令把 tag 名的 v 前缀剥掉，
+      # 交给下面的同步脚本分发到四个消费点。
       - name: Resolve version
         id: version
         shell: pwsh
         run: |
-          if ("${{ github.ref_type }}" -eq "tag") {
-            $v = "${{ github.ref_name }}".TrimStart("v")
-          } else {
+          $v = ""
+          if ("${{ inputs.version }}" -ne "") {
             $v = "${{ inputs.version }}"
+          } else {
+            $json = Get-Content package.json -Raw | ConvertFrom-Json
+            $v = $json.version
           }
-          if ($v -notmatch '^\d+\.\d+\.\d+') { throw "版本号格式不对: $v" }
+          $v = $v.TrimStart("v")
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "版本号格式不对: $v（要求 x.y.z）" }
           "value=$v" >> $env:GITHUB_OUTPUT
           Write-Host "版本号 = $v"
 
-      - name: Stamp version into build files
+      # 幂等闸门：Release 已存在说明这版发过了，直接放行不做事。
+      # 这条是「push 触发」能安全重放的关键——不然每次动 package.json 都会撞 already exists。
+      # 判据用 Release 而不是 tag：若打包成功、tag 已推但建 Release 那步挂了，
+      # 远程会剩个孤儿 tag。只看 tag 就会永远跳过、再也修不了；只看 Release
+      # 则下次重跑会重新构建并把 Release 补上（tag 那步做成幂等，见最后一步）。
+      - name: Skip if already released
+        id: gate
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $v = "${{ steps.version.outputs.value }}"
-          # 逐文件正则替换，不用 ConvertFrom-Json——避免重排键序、改缩进。
-          (Get-Content electron/package.json -Raw) `
-            -replace '"version":\s*"[^"]*"', "`"version`": `"$v`"" `
-            | Set-Content electron/package.json -NoNewline -Encoding utf8
-          (Get-Content app/core/config.py -Raw) `
-            -replace 'VERSION: str = "[^"]*"', "VERSION: str = `"$v`"" `
-            | Set-Content app/core/config.py -NoNewline -Encoding utf8
-          Write-Host "package.json -> $((Get-Content electron/package.json -Raw | Select-String '"version":\s*"[^"]*"' -AllMatches).Matches.Value)"
-          Write-Host "config.py    -> $((Get-Content app/core/config.py -Raw | Select-String 'VERSION: str = "[^"]*"' -AllMatches).Matches.Value)"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
+          $tag = "v${{ steps.version.outputs.value }}"
+          gh release view $tag --json tagName 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "::$tag 的 Release 已存在，跳过打包"
+            "skip=true" >> $env:GITHUB_OUTPUT
+          } else {
+            "skip=false" >> $env:GITHUB_OUTPUT
+          }
 
       - name: Setup Node
+        if: steps.gate.outputs.skip != 'true'
         uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -69,9 +76,42 @@ jobs:
             frontend/package-lock.json
             electron/package-lock.json
 
-      # electron 依赖先装——下面预置 winCodeSign 缓存要用它自带的 7za.exe
-      # （用锁文件里钉死的版本，比依赖 runner 上碰巧有的系统 7z 稳）。
+      # 版本号分发：以根 package.json 为源，写进 electron/package.json（electron-builder
+      # 构建时读）、app/core/config.py（后端运行时读 /health）、frontend/package.json、
+      # pyproject.toml。改的是**工作区**里的源码——PyInstaller 随后冻结这份，版本号才进得了产物。
+      - name: Sync version to consumers
+        if: steps.gate.outputs.skip != 'true'
+        run: node scripts/sync-version.mjs ${{ steps.version.outputs.value }}
+
+      - name: Install uv
+        if: steps.gate.outputs.skip != 'true'
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        if: steps.gate.outputs.skip != 'true'
+        run: uv python install
+
+      # 只装 dev 组（含 pyinstaller）。test 组刻意不装：开源树不含测试文件（ADR 0021）。
+      - name: Sync backend dependencies
+        if: steps.gate.outputs.skip != 'true'
+        run: uv sync --frozen --group dev
+
+      - name: Build backend (PyInstaller onedir)
+        if: steps.gate.outputs.skip != 'true'
+        run: uv run pyinstaller backend.spec --clean
+
+      - name: Build frontend
+        if: steps.gate.outputs.skip != 'true'
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      # electron 依赖要在 winCodeSign 预置之前装好——预置步骤要用它自带的 7za.exe。
       - name: Install electron dependencies
+        if: steps.gate.outputs.skip != 'true'
         working-directory: electron
         run: npm ci
 
@@ -83,6 +123,7 @@ jobs:
       # electron-builder 预期的规范名目录，它会直接认这个缓存、不再下载。
       # 不用 actions/cache：现场解压约 1 秒，且免掉「缓存未命中就撞坑」的失败模式。
       - name: Pre-seed winCodeSign cache
+        if: steps.gate.outputs.skip != 'true'
         shell: pwsh
         run: |
           $cache = "$env:LOCALAPPDATA\electron-builder\Cache\winCodeSign"
@@ -94,28 +135,13 @@ jobs:
           Remove-Item $archive
           Write-Host "已预置: $cache\winCodeSign-2.6.0"
 
-      - name: Install Python
-        run: uv python install
-
-      # 只装 dev 组（含 pyinstaller）。test 组刻意不装：开源树不含测试文件，
-      # 这正是 ADR 0021 的取舍「只做发布打包，不跑测试」。
-      - name: Sync backend dependencies
-        run: uv sync --frozen --group dev
-
-      - name: Build backend (PyInstaller onedir)
-        run: uv run pyinstaller backend.spec --clean
-
-      - name: Build frontend
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
-
       - name: Build installer (electron-builder)
+        if: steps.gate.outputs.skip != 'true'
         working-directory: electron
         run: npm run build
 
       - name: Collect artifacts
+        if: steps.gate.outputs.skip != 'true'
         shell: pwsh
         run: |
           Get-ChildItem dist/installer -File | ForEach-Object {
@@ -123,6 +149,7 @@ jobs:
           }
 
       - name: Upload artifacts
+        if: steps.gate.outputs.skip != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: career-nova-${{ steps.version.outputs.value }}-windows
@@ -131,16 +158,27 @@ jobs:
           path: dist/installer/*.exe
           if-no-files-found: error
 
-      # 只在 tag 推送、或手动勾了 create_release 时建正式 Release。
-      # 干跑（手动、未勾）只到上一步的 Artifacts 为止，不对外发版。
-      - name: Create GitHub Release
-        if: github.ref_type == 'tag' || inputs.create_release
+      # 打 tag + 建 Release。tag 在**构建成功之后**才推——若前面任何一步失败，
+      # 远程不留孤儿 tag，幂等闸门下次就会重跑（否则失败一次就永远修不了）。
+      - name: Create tag & release
+        if: (github.event_name == 'push' || inputs.create_release) && steps.gate.outputs.skip != 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $v = "${{ steps.version.outputs.value }}"
           $tag = "v$v"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # 幂等：恰好被上次「建 tag 成功但建 Release 失败」留下的孤儿 tag，这里就地补上。
+          if (git ls-remote --tags origin "refs/tags/$tag") {
+            git tag -d $tag 2>$null
+            git fetch --depth=1 origin "refs/tags/$tag`:refs/tags/$tag"
+            Write-Host "$tag 已存在，复用"
+          } else {
+            git tag -a $tag -m "Career Nova $tag"
+            git push origin $tag
+          }
           # 只挂 NSIS + Portable 两个 exe；blockmap/builder-debug.yml 不上 Release。
           # ⚠️ 传给原生命令必须用 @assets 展开：直接 $assets 会把所有路径拼成
           # 一个空格分隔的参数（gh 当成单个文件名），多文件时必炸。
@@ -149,6 +187,6 @@ jobs:
           Write-Host "将上传 $($assets.Count) 个文件:"
           $assets | ForEach-Object { Write-Host "  $_" }
           gh release create $tag `
-            --title "Career Nova v$v" `
+            --title "Career Nova $tag" `
             --generate-notes `
             @assets

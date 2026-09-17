@@ -1,0 +1,10 @@
+{
+  "name": "career-nova",
+  "private": true,
+  "version": "0.1.1",
+  "description": "版本号唯一真相源（ADR 0022）。改这里 → push main → CI 自动打包并发版。",
+  "scripts": {
+    "sync-version": "node scripts/sync-version.mjs",
+    "test:version": "npx vitest run --root . --globals scripts/sync-version.test.mjs"
+  }
+}

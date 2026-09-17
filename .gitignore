@@ -73,6 +73,7 @@ desktop.ini
 docs/*
 !docs/API.md
 !docs/DATABASE.md
+!docs/RELEASE.md
 !docs/frontend-styles.md
 !docs/design/
 docs/design/*

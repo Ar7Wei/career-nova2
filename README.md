@@ -164,9 +164,10 @@ uv run fastapi dev app/main.py   # 只起后端（默认 8000；Electron 下用 
 
 ## 自己打包（Windows 安装包）
 
-按顺序产出三块料，再交给 electron-builder。三块都落到项目根的统一产物目录 `dist/`：
+版本号的唯一真相源是仓库根的 `package.json`。打之前先把它分发到各消费点（后端 `/health`、安装包文件名等），否则产物带的是上次的版本号：
 
 ```bash
+npm run sync-version                      # 0. 版本号 → electron / frontend / 后端 / pyproject / uv.lock
 uv run pyinstaller backend.spec --clean   # 1. 冻结后端 → dist/backend/
 cd frontend && npm run build && cd ..     # 2. 前端产物 → dist/frontend/
 cd electron && npm run build              # 3. 出安装包 → dist/installer/
@@ -180,7 +181,9 @@ cd electron && npm run build              # 3. 出安装包 → dist/installer/
 | `dist/frontend/` | 前端构建产物（vite） |
 | `dist/installer/` | **NSIS 安装器**（`Career Nova Setup *.exe`，主）+ Portable（`Career Nova *.exe`，免安装） |
 
-> 要干净重打：先 `rm -rf dist build`（`build/` 是 PyInstaller 的工作目录），再跑上面三步。
+> 要干净重打：先 `rm -rf dist build`（`build/` 是 PyInstaller 的工作目录），再跑上面四步。
+>
+> 发版（自动打包 + 出 Release）走 CI，只需改根 `package.json` 的版本号并 push 到 `main`——详见 [docs/RELEASE.md](docs/RELEASE.md)。
 
 ## 未来展望
 
