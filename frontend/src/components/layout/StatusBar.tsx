@@ -7,11 +7,15 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import { useSidebarStore } from '@/stores/sidebarStore'
 import { useT } from '@/lib/i18n'
 
-/** 底部固定状态条：左「折叠开关 + 后端连接状态」；右「LLM 模型（点击跳转设置页模型区）」。 */
+/** 启动时取版本号的重试节奏：后端起得慢，拿不到就再来一次，到次数为止。 */
+const VERSION_FETCH_MAX_TRIES = 10
+const VERSION_FETCH_RETRY_MS = 1500
+
+/** 底部固定状态条：左「折叠开关 + 后端连接状态」；右「版本号 + LLM 模型（点击跳转设置页模型区）」。 */
 export function StatusBar() {
   const t = useT()
   const navigate = useNavigate()
-  const { status, startPolling, stopPolling } = useHealthStore()
+  const { status, version, startPolling, stopPolling, fetchVersion } = useHealthStore()
   // 模型名读设置 store（App.tsx 启动时已 load）：与设置面板选的真实模型一致，不再写死
   const model = useSettingsStore((s) => s.llm_model)
   const collapsed = useSidebarStore((s) => s.collapsed)
@@ -23,6 +27,23 @@ export function StatusBar() {
     startPolling()
     return () => stopPolling()
   }, [startPolling, stopPolling])
+
+  // 启动时另取版本号：后端起得比前端慢，第一次多半打不通，故轮询重试到拿到为止。
+  // 与连接状态解耦——拿不到就只是不显示，不影响任何功能。
+  useEffect(() => {
+    let tries = 0
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const attempt = async () => {
+      await fetchVersion()
+      if (useHealthStore.getState().version) return // 已拿到，收工
+      if (++tries >= VERSION_FETCH_MAX_TRIES) return
+      timer = setTimeout(() => void attempt(), VERSION_FETCH_RETRY_MS)
+    }
+    void attempt()
+    return () => {
+      if (timer) clearTimeout(timer)
+    }
+  }, [fetchVersion])
 
   const dotClass = status === 'online' ? 'green' : status === 'offline' ? 'gray' : 'gray'
   const label =
@@ -56,10 +77,11 @@ export function StatusBar() {
           <span className="statusbar-toggle-label">{t(collapsed ? 'menu.expand' : 'menu.collapse')}</span>
         </Button>
       </div>
-      {/* 右列：连接状态（左）+ LLM 模型（贴右端） */}
+      {/* 右列：连接状态（左）+ 版本号 + LLM 模型（贴右端） */}
       <div className="statusbar-right">
         <span className={`status-dot ${dotClass}`} />
         <span className="statusbar-text">{label}</span>
+        {version && <span className="statusbar-version">v{version}</span>}
         <Button
           variant="subtle"
           size="compact-sm"

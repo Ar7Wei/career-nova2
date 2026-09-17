@@ -5,6 +5,8 @@ export type BackendStatus = 'checking' | 'online' | 'offline'
 
 interface HealthState {
   status: BackendStatus
+  /** 后端版本号（来自 /health），未取到 = null。底部状态条显示用。 */
+  version: string | null
   /** 业务请求成功 → 标记在线并停止探活。 */
   markOnline: () => void
   /** 业务请求网络层失败 → 标记离线并启动探活轮询（直到重新连上）。 */
@@ -13,6 +15,8 @@ interface HealthState {
   startPolling: () => void
   /** 停止探活轮询。 */
   stopPolling: () => void
+  /** 探一次 /health 取版本号（幂等，失败静默）。与连接状态解耦。 */
+  fetchVersion: () => Promise<void>
 }
 
 /** 后端地址：Electron 态用 preload 注入的绝对源（打包 file:// 必须绝对地址）；
@@ -39,6 +43,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
  */
 export const useHealthStore = create<HealthState>((set, get) => ({
   status: 'checking',
+  version: null,
 
   markOnline: () => {
     get().stopPolling()
@@ -68,6 +73,25 @@ export const useHealthStore = create<HealthState>((set, get) => ({
     if (pollTimer) {
       clearInterval(pollTimer)
       pollTimer = null
+    }
+  },
+
+  /**
+   * 探一次 /health 只为取版本号（底部状态条显示）。
+   *
+   * 刻意**不复用** lib/api：api.ts 已经 import 本 store（做连接状态联动），
+   * 这里再 import 它会成循环依赖。故直接打 axios，与本文件其余探活一致。
+   *
+   * 也与连接状态解耦：抓不到就静默保持 null——版本号是锦上添花，
+   * 不该因为一次失败把 status 带坏（status 只由真实业务流量的成败驱动）。
+   */
+  fetchVersion: async () => {
+    try {
+      const res = await axios.get(`${BASE}/health`, { timeout: PROBE_TIMEOUT_MS })
+      const v = res?.data?.version
+      if (typeof v === 'string' && v) set({ version: v })
+    } catch {
+      // 静默：未取到版本号不影响任何功能
     }
   },
 }))
