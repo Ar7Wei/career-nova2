@@ -9,8 +9,8 @@ export const en: Messages = {
     name: 'Career Nova',
   },
   menu: {
-    resume: 'Resume Editor',
-    apply: 'Job Applications',
+    resume: 'Resume',
+    apply: 'Applications',
     growth: 'Growth',
     chatter: 'Chatter',
     settings: 'Settings',
@@ -18,8 +18,8 @@ export const en: Messages = {
     expand: 'Expand sidebar',
   },
   page: {
-    resume: { title: 'Resume Editor', desc: 'Parse, polish and generate your resume' },
-    apply: { title: 'Job Applications', desc: 'Manage your application pipeline' },
+    resume: { title: 'Resume', desc: 'Parse, polish and generate your resume' },
+    apply: { title: 'Applications', desc: 'Manage your application pipeline' },
     growth: { title: 'Growth', desc: 'Track growth and retrospectives' },
     chatter: { title: 'Chatter', desc: 'Q&A over industry documents' },
     settings: { title: 'Settings', desc: 'Configure app and model' },
