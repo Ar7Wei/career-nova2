@@ -1,4 +1,4 @@
-# Career Nova v2 — 数据库说明
+# Career Nova22 — 数据库说明
 
 > 本地单用户，**SQLite 单文件**为主存储；`sqlite-vec` 只做向量（留给 Chatter RAG）。
 > 本文件是库结构的单一真相源，改了就回来更新。

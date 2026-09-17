@@ -159,8 +159,8 @@ jobs:
         if: steps.gate.outputs.skip != 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: career-nova-${{ steps.version.outputs.value }}-windows
-          # NSIS 安装器（Career Nova Setup *.exe）+ Portable（Career Nova *.exe）。
+          name: career-nova2-${{ steps.version.outputs.value }}-windows
+          # NSIS 安装器（Career Nova2 Setup *.exe）+ Portable（Career Nova2 *.exe）。
           # 不带 *.blockmap——那是给自动更新做差分的，本应用用不上。
           path: dist/installer/*.exe
           if-no-files-found: error
@@ -187,7 +187,7 @@ jobs:
             git fetch --depth=1 origin "refs/tags/$tag`:refs/tags/$tag"
             Write-Host "$tag 已存在，复用"
           } else {
-            git tag -a $tag -m "Career Nova $tag"
+            git tag -a $tag -m "Career Nova2 $tag"
             git push origin $tag
           }
           # 只挂 NSIS + Portable 两个 exe；blockmap/builder-debug.yml 不上 Release。
@@ -198,6 +198,6 @@ jobs:
           Write-Host "将上传 $($assets.Count) 个文件:"
           $assets | ForEach-Object { Write-Host "  $_" }
           gh release create $tag `
-            --title "Career Nova $tag" `
+            --title "Career Nova2 $tag" `
             --generate-notes `
             @assets

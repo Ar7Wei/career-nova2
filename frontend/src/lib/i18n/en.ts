@@ -6,7 +6,7 @@ import type { Messages } from './zh'
  */
 export const en: Messages = {
   app: {
-    name: 'Career Nova',
+    name: 'Career Nova2',
   },
   menu: {
     resume: 'Resume',

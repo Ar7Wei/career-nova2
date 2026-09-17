@@ -36,7 +36,7 @@ function showWindow() {
 function createTray(onQuit) {
   if (tray && !tray.isDestroyed()) return;
   tray = new Tray(buildTrayIcon());
-  tray.setToolTip("Career Nova");
+  tray.setToolTip("Career Nova2");
 
   // 右键 → 自绘菜单 toggle（已显示则关，否则开；替换老式 Win32 Menu.buildFromTemplate）
   tray.on("right-click", () => {

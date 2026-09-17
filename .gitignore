@@ -44,6 +44,10 @@ tests/
 *.test.js
 *.test.cjs
 *.test.mjs
+# scripts/ 放的是**要发布**的构建工具（sync-version.mjs 被 CI 调用），
+# 上面那条 *.test.mjs 会误伤它的测试——显式放行，保持「测试不进公开树」的红线。
+!scripts/
+!scripts/sync-version.mjs
 *.spec.*
 __tests__/
 frontend/src/test/

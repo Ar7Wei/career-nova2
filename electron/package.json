@@ -2,7 +2,7 @@
   "name": "career-nova-electron",
   "version": "0.1.1",
   "private": true,
-  "description": "Career Nova desktop shell (Electron)",
+  "description": "Career Nova2 desktop shell (Electron)",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -18,8 +18,8 @@
     "vitest": "^5.0.0"
   },
   "build": {
-    "appId": "com.careernova.app",
-    "productName": "Career Nova",
+    "appId": "com.careernova2.app",
+    "productName": "Career Nova2",
     "icon": "assets/icon.png",
     "directories": {
       "output": "../dist/installer"
@@ -64,7 +64,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Career Nova"
+      "shortcutName": "Career Nova2"
     },
     "portable": {}
   }

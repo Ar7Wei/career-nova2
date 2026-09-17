@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="electron/assets/icon.png" alt="Career Nova" width="120">
+<img src="electron/assets/icon.png" alt="Career Nova2" width="120">
 
-# Career Nova
+# Career Nova2
 
 **Local-first, single-user, open-source desktop app for job hunting**
 
@@ -31,7 +31,7 @@ Resumes, applications, and interview follow-ups in one place — all of it in a 
 
 ## What it is
 
-Career Nova is a job-hunting workbench that runs entirely on your machine — not SaaS, not multi-user, no cloud.
+Career Nova2 is a job-hunting workbench that runs entirely on your machine — not SaaS, not multi-user, no cloud.
 
 It does three things for you:
 
@@ -47,8 +47,8 @@ Grab the latest build from the [**Releases**](https://github.com/Ar7Wei/career-n
 
 | File | What it is |
 |---|---|
-| `Career Nova Setup x.y.z.exe` | **NSIS installer** (recommended) — choose install dir, creates Start Menu / desktop shortcuts |
-| `Career Nova x.y.z.exe` | **Portable** — single file, runs in place; good for a USB stick or a quick try |
+| `Career Nova2 Setup x.y.z.exe` | **NSIS installer** (recommended) — choose install dir, creates Start Menu / desktop shortcuts |
+| `Career Nova2 x.y.z.exe` | **Portable** — single file, runs in place; good for a USB stick or a quick try |
 
 Just double-click to launch. **No Python, Node, or uv required** — the backend ships frozen inside the installer.
 
@@ -178,7 +178,7 @@ Everything lands under `dist/`:
 |---|---|
 | `dist/backend/` | the frozen FastAPI backend (onedir) |
 | `dist/frontend/` | the frontend bundle (vite) |
-| `dist/installer/` | **NSIS installer** (`Career Nova Setup *.exe`, primary) + Portable (`Career Nova *.exe`, no install) |
+| `dist/installer/` | **NSIS installer** (`Career Nova2 Setup *.exe`, primary) + Portable (`Career Nova2 *.exe`, no install) |
 
 > For a clean rebuild: `rm -rf dist build` first (`build/` is PyInstaller's work directory), then run the three steps.
 

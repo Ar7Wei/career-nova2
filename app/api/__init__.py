@@ -1,1 +1,1 @@
-"""Career Nova backend package."""
+"""Career Nova2 backend package."""

@@ -29,9 +29,15 @@ process.on("unhandledRejection", (reason) => {
 let isQuitting = false;
 
 // 固定 userData 目录（2026-08-17）：开发态 app.getName() = "career-nova-electron"、
-// 打包态 = "Career Nova"（build.productName），两态 userData 分家 → 登录态（session partition）
-// 与 settings.json 各自存一处，开发登录的号打包后要重登。这里显式统一到 appData/Career Nova，
+// 打包态 = "Career Nova2"（build.productName），两态 userData 分家 → 登录态（session partition）
+// 与 settings.json 各自存一处，开发登录的号打包后要重登。这里显式统一到 appData/Career Nova2，
 // 消除分家。setPath 必须在 app ready 前调用才生效。
+//
+// ⚠️ 产品名 2026-09-17 改为 "Career Nova2"，但**目录名故意仍留旧的 "Career Nova"**：
+// 它是老用户的既有数据位置（settings.json / 登录态 partition / 日志都在那）。跟着改名
+// 会让升级用户「设置与登录态凭空消失」（数据还在旧目录，新目录是空的）。这与
+// productName 不同步是**有意的**——产品名是给人看的，目录名是给数据用的，两者解耦。
+// 若将来真要迁移目录，得照 db-migrate/log-migrate 的写法做一次性搬家，不能直接改这行。
 const LEGACY_USERDATA_DIR = app.getPath("userData");
 const UNIFIED_USERDATA_DIR = path.join(app.getPath("appData"), "Career Nova");
 app.setPath("userData", UNIFIED_USERDATA_DIR);

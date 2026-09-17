@@ -1,4 +1,4 @@
-# Career Nova v2 — 接口说明
+# Career Nova22 — 接口说明
 
 > 本地 FastAPI 服务，前缀 `/api/v1`（见 `app/main.py` / `app/api/v1`）。
 > 本文件是接口的单一真相源，改了就回来更新。

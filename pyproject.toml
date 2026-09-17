@@ -1,7 +1,7 @@
 [project]
 name = "career-nova"
 version = "0.1.1"
-description = "Career Nova v2 — 本地优先、单用户的求职桌面应用后端"
+description = "Career Nova2 — 本地优先、单用户的求职桌面应用后端"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -66,5 +66,9 @@ convention = "google"
 python_version = "3.13"
 packages = ["app"]
 ignore_missing_imports = true
-exclude = ["tests", ".venv"]
+# dist/ 与 build/ 是 PyInstaller 产物：dist/backend/_internal/ 里冻结着 langgraph 等
+# 第三方包的 .py（如 langgraph/typing.py），mypy 会把它们当源码检查，报
+# "shadows library module typing" 一类的假错误、直接中止。产物不入库（.gitignore 已挡），
+# 这里也显式排除——否则「本地打过包」和「没打过包」的 mypy 结果不一致。
+exclude = ["tests", ".venv", "dist", "build"]
 plugins = ["pydantic.mypy"]

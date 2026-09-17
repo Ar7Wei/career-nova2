@@ -27,7 +27,7 @@ function createMainWindow(frontendPort) {
     height: 900,
     minWidth: 960,
     minHeight: 600,
-    title: "Career Nova",
+    title: "Career Nova2",
     icon: path.join(ASSETS_DIR, "icon.png"), // 任务栏/Alt-Tab/窗口图标（替换 Electron 默认）
     frame: false, // 自绘 TitleBar
     autoHideMenuBar: true,

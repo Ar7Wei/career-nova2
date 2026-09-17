@@ -1,5 +1,5 @@
 /* ===========================================================================
-   Career Nova — 全局样式编排（借鉴 AlgerMusicPlayer，单主题 light）
+   Career Nova2 — 全局样式编排（借鉴 AlgerMusicPlayer，单主题 light）
    主色绿 #22c55e + light 灰阶；玻璃拟态弹层；柔和圆角阴影。
    颜色一律走 CSS 变量（供自绘 CSS 与内联 var() 使用）。
    Mantine 组件主题见 src/theme/alger.ts（自绘部分走 --color-* 变量，两轨同源）。

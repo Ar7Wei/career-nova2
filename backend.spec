@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""Career Nova 后端 PyInstaller spec(ADR 0021,onedir)。
+"""Career Nova2 后端 PyInstaller spec(ADR 0021,onedir)。
 
 冻结入口 = 根目录 backend_main.py(进程内 uvicorn.run(app),不冻结 uvicorn 命令行)。
 产物 = onedir(否 onefile:免每次启动解压 temp、降杀毒误报、数据文件随包走 `__file__` 可解析)。

@@ -1,5 +1,5 @@
 /* ===========================================================================
-   Career Nova — 设计 token（借鉴 AlgerMusicPlayer，单主题 light）
+   Career Nova2 — 设计 token（借鉴 AlgerMusicPlayer，单主题 light）
    主色绿 #22c55e + light 灰阶；玻璃拟态弹层；柔和圆角阴影。
    颜色一律走 CSS 变量（供自绘 CSS 与内联 var() 使用）。
    2026-08：Mantine 接入后，组件主题见 src/theme/alger.ts（本文件只供自绘部分）。

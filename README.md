@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="electron/assets/icon.png" alt="Career Nova" width="120">
+<img src="electron/assets/icon.png" alt="Career Nova2" width="120">
 
-# Career Nova
+# Career Nova2
 
 **本地优先 · 单用户 · 开源的求职桌面应用**
 
@@ -31,7 +31,7 @@
 
 ## 这是什么
 
-Career Nova 是一个跑在本机的求职工作台——不是 SaaS，不是多用户，不上云。
+Career Nova2 是一个跑在本机的求职工作台——不是 SaaS，不是多用户，不上云。
 
 它替你做三件事：
 
@@ -47,8 +47,8 @@ Career Nova 是一个跑在本机的求职工作台——不是 SaaS，不是多
 
 | 文件 | 说明 |
 |---|---|
-| `Career Nova Setup x.y.z.exe` | **NSIS 安装器**（推荐）— 可选安装目录、建开始菜单/桌面快捷方式 |
-| `Career Nova x.y.z.exe` | **免安装版** — 单文件直接运行，适合放 U 盘或临时试用 |
+| `Career Nova2 Setup x.y.z.exe` | **NSIS 安装器**（推荐）— 可选安装目录、建开始菜单/桌面快捷方式 |
+| `Career Nova2 x.y.z.exe` | **免安装版** — 单文件直接运行，适合放 U 盘或临时试用 |
 
 装好后直接双击启动，**无需安装 Python、Node 或 uv**——后端已随安装包一起冻结。
 
@@ -164,7 +164,7 @@ uv run fastapi dev app/main.py   # 只起后端（默认 8000；Electron 下用 
 
 ## 自己打包（Windows 安装包）
 
-版本号的唯一真相源是仓库根的 `package.json`。打之前先把它分发到各消费点（后端 `/health`、安装包文件名等），否则产物带的是上次的版本号：
+版本号的唯一真相源是仓库根的 `package.json`（文件名不带 2——那是包标识符；产品名是 `Career Nova2`）。打之前先把它分发到各消费点（后端 `/health`、安装包文件名等），否则产物带的是上次的版本号：
 
 ```bash
 npm run sync-version                      # 0. 版本号 → electron / frontend / 后端 / pyproject / uv.lock
@@ -179,7 +179,7 @@ cd electron && npm run build              # 3. 出安装包 → dist/installer/
 |---|---|
 | `dist/backend/` | 冻结的 FastAPI 后端（onedir） |
 | `dist/frontend/` | 前端构建产物（vite） |
-| `dist/installer/` | **NSIS 安装器**（`Career Nova Setup *.exe`，主）+ Portable（`Career Nova *.exe`，免安装） |
+| `dist/installer/` | **NSIS 安装器**（`Career Nova2 Setup *.exe`，主）+ Portable（`Career Nova2 *.exe`，免安装） |
 
 > 要干净重打：先 `rm -rf dist build`（`build/` 是 PyInstaller 的工作目录），再跑上面四步。
 >

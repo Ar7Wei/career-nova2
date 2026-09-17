@@ -4,7 +4,7 @@
  */
 export const zh = {
   app: {
-    name: 'Career Nova',
+    name: 'Career Nova2',
   },
   menu: {
     resume: '简历编辑',

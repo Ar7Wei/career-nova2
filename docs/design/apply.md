@@ -301,7 +301,7 @@ WebContentsView 的核心代价 = 主进程专属 + 手动 `setBounds` 定位（
 - **JD 入库**：`jobs.description` 存详情页 JD 正文（BOSS/前程无忧有，智联已放弃），前端详情弹窗展示。
 - 拉勾放弃（与 jobfindsme 退役 `lagou_cdp` 判断一致）。
 
-**诊断脚本（`electron/scripts/`，2026-08-18；`probe-*.js` / `cdp-*.mjs` 已于 2026-09-11 清扫删除）**：平台反爬排查用的一次性诊断脚本（`probe-detail.js` / `probe-click-through*.js` / `probe-job51-link.js` 等）**已删**——用完即弃，平台改版后需重测选择器时按需重写。保留 `diagnose.js`（进程诊断）与 `kill-verify.js`（必杀路径验证）。**重写/再跑这类脚本时注意两点**：① 不要用 bash `timeout` 强杀（会留僵尸 electron 子进程锁 partition cache，日志报 `Unable to move the cache`）——脚本自身 `app.exit(0)` 正常退出即可；② 脚本没做 `app.setPath("userData", …)`，会用默认 userData（`career-nova-electron`）而非正式 app 的 `Career Nova`，读到的 partition 登录态与正式 app 不通——跑前需补 `app.setPath("userData", path.join(app.getPath("appData"), "Career Nova"))` 才能测真实登录态。
+**诊断脚本（`electron/scripts/`，2026-08-18；`probe-*.js` / `cdp-*.mjs` 已于 2026-09-11 清扫删除）**：平台反爬排查用的一次性诊断脚本（`probe-detail.js` / `probe-click-through*.js` / `probe-job51-link.js` 等）**已删**——用完即弃，平台改版后需重测选择器时按需重写。保留 `diagnose.js`（进程诊断）与 `kill-verify.js`（必杀路径验证）。**重写/再跑这类脚本时注意两点**：① 不要用 bash `timeout` 强杀（会留僵尸 electron 子进程锁 partition cache，日志报 `Unable to move the cache`）——脚本自身 `app.exit(0)` 正常退出即可；② 脚本没做 `app.setPath("userData", …)`，会用默认 userData（`career-nova-electron`）而非正式 app 的 `Career Nova`（**该目录名自 2026-09-17 起刻意不随产品名 "Career Nova2" 变**，为保老用户数据，详见 `electron/main.js` 注释），读到的 partition 登录态与正式 app 不通——跑前需补 `app.setPath("userData", path.join(app.getPath("appData"), "Career Nova"))` 才能测真实登录态。
 
 **线头**：抓取条数进设置面板（已并入 Task #7 的每平台 quota，见 §8）；JD 选择器各家精细化（BOSS `.job-sec-text` / 前程无忧 `.bmsg.job_msg` 已通）；关键词/城市参数化已落地（2026-08-19 读方向 + 2026-08-31 猎聘读方向）。
 
