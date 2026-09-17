@@ -265,7 +265,7 @@ interface ResumeState {
  * 聊天框右下角按钮 + 思考气泡是它的唯一出口，左栏解析卡 / 建议面板遮罩降为投影。
  *
  * 关键：**这是视觉信号，不是锁**。锁（`generating` / `applying` 决定能不能发消息/操作）
- * 与它解耦——所以「解析/抽取」能亮气泡却不禁用输入（CLAUDE.md「后台抽取不耽误聊天」）。
+ * 与它解耦——所以「解析/抽取」能亮气泡却不禁用输入（后台抽取不耽误聊天）。
  */
 export type WorkingKind = 'parsing' | 'extracting' | 'opening' | 'replying' | 'applying'
 
@@ -745,7 +745,7 @@ export const useResumeStore = create<ResumeState>((set, get) => ({
       if (generation !== chatGeneration) return
       set((s) => ({
         generating: false,
-        // 聊天内失败留在聊天流内（assistant 文本，CLAUDE.md「聊天内失败留在聊天流内」）——
+        // 聊天内失败留在聊天流内（assistant 文本）——
         // 这是「助手没能回复」，不是「系统操作」，不走系统气泡红条。
         messages: pushAssistant(s, userErrorText(err)),
       }))

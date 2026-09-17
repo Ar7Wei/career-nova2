@@ -1,8 +1,8 @@
 """PyInstaller 冻结态入口。
 
-开发态后端走 `uv run uvicorn app.main:app`（见 CLAUDE.md「后端一律 UV 运行」）；
+开发态后端走 `uv run uvicorn app.main:app`（后端一律用 uv 管依赖与运行）；
 打包分发时后端是 PyInstaller 冻结的 onedir exe，由本脚本在进程内 `uvicorn.run()` 起服务——
-冻结 uvicorn 命令行本身在多进程/重载场景不可靠，故直接以应用对象启动（ADR 0021）。
+冻结 uvicorn 命令行本身在多进程/重载场景不可靠，故直接以应用对象启动。
 
 用法（Electron process-manager exe 模式 spawn）：
     backend.exe --host 127.0.0.1 --port 8765

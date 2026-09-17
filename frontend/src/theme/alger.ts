@@ -82,7 +82,7 @@ export const algerTheme = createTheme({
     easeOut: 'cubic-bezier(0.16, 1, 0.3, 1)',
   },
 
-  // 全局：禁暗色（单主题 light，CLAUDE.md 定）——v9 经 MantineProvider defaultColorScheme 设置（main.tsx）。
+  // 全局：禁暗色（单主题 light）——v9 经 MantineProvider defaultColorScheme 设置（main.tsx）。
 
   // 组件注入：恢复按钮原视觉（2026-08-08 双轨收敛后修正回归）。
   // subtle 变体 = 原 .btn-ghost 幽灵钮：透明底、**无边框**（2026-08-24 修：幽灵不该有灰边，
@@ -131,7 +131,7 @@ export const algerTheme = createTheme({
     }),
     // Toast（@mantine/notifications 的 Notification 基类）：玻璃拟态弹层。
     // 出厂视觉是白底实心卡（Notification.module.css 的 background:white + --mantine-shadow-lg），
-    // 与弹窗/悬浮卡不像一家；这里**只覆背景/边框/投影**，换成 .glass 三件套（CLAUDE.md 弹层规范）。
+    // 与弹窗/悬浮卡不像一家；这里**只覆背景/边框/投影**，换成 .glass 三件套（全局弹层规范）。
     // 形状（圆角走 --notification-radius ← theme.defaultRadius=md）与内边距保持 Mantine 默认，
     // 更稳（色条 ::before 用 padding-inline-start:22px 避让、closeButton 右缘对齐都依赖它）。
     // 不用 .glass 类（它在 styles/ 里，theme 注入不该反向依赖应用 CSS）；气泡 Tooltip 未注入，

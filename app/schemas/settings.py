@@ -4,7 +4,7 @@
 - 启动前就要的（backend_port/close_action）→ Electron 本地 settings.json，不经后端。
 - 这里只放普通用户偏好：语言、LLM 模型/base_url/API key。
   （数据目录 data_dir 已挪到 Electron 线 settings.json——启动前就要读、且驱动 DATABASE_URL，
-  见 CLAUDE.md「配置三真相源」。）
+  与本表分属不同真相源，勿混。）
 - API key 也放这里（本地单用户，SQLite 与本机同处）；对外响应一律掩码，
   前端只写不回读。**key 唯一来源 = 此表**（N1，2026-08-13 删 .env 兜底——
   打包 exe 无 .env，env 兜底是死设计）。

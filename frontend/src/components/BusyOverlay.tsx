@@ -5,7 +5,7 @@ import { Loader2 } from 'lucide-react'
  * 显示正在执行的任务。配合外层按钮 disabled——遮罩管「浮窗/面板」这类操作点，
  * 按钮 disabled 管「行内按钮」这类操作点，两者同源（store 的 busy）。
  *
- * 玻璃拟态：backdrop-filter blur + 半透明底，与 CLAUDE.md「玻璃拟态」同 token。
+ * 玻璃拟态：backdrop-filter blur + 半透明底，与全局 .glass 三件套同 token。
  */
 export function BusyOverlay({ busy, label }: { busy: boolean; label: string }) {
   if (!busy) return null
