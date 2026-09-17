@@ -25,7 +25,9 @@
 
 </div>
 
-<!-- 📸 截图占位：后续补应用截图 -->
+<p>
+  <img src="docs/assets/screenshots/hero-main.png" alt="Career Nova2 主界面" width="800">
+</p>
 
 ---
 
@@ -40,6 +42,10 @@ Career Nova2 是一个跑在本机的求职工作台——不是 SaaS，不是�
 - **市场**——想知道「我这个方向还缺什么」，直接问它，它现场去招聘网站查真实数据。
 
 它不替你投简历，也不替你决定去哪家。**筛岗位、投简历、做决定的始终是你**——它只是把机械的那部分接过去。
+
+<p>
+  <img src="docs/assets/screenshots/resume-chat.png" alt="对话式生成简历：聊天流 + 实时预览" width="800">
+</p>
 
 ## 下载与安装
 
@@ -64,6 +70,13 @@ Career Nova2 是一个跑在本机的求职工作台——不是 SaaS，不是�
    - **不配 key 也能用**——只是「简历优化」「对话生成」「查市场」这些 AI 功能不可用，手动管理岗位、跟进投递照常。
    - 支持任意 **OpenAI 兼容端点**（官方 API、DeepSeek、本地 Ollama / vLLM 等）。
 3. **导入简历**：**简历**页上传旧的 PDF / DOCX / Markdown，后台自动抽取经历进「信息库」；也可以在聊天里直接说你的经历。
+
+<p>
+  <img src="docs/assets/screenshots/resume-list.png" alt="简历页：已上传简历与抽取状态" width="800">
+</p>
+<p>
+  <img src="docs/assets/screenshots/resume-export.png" alt="简历预览与导出（PDF / Markdown / HTML）" width="800">
+</p>
 4. **抓岗位**：**投递**页选平台（猎聘 / 前程无忧）→ 配筛选条件 → 抓取 → 去重排序后进统一列表。
 5. **改数据目录 / 端口**：**设置**页可改数据目录（整个 SQLite 快照搬家）、后端端口、关闭行为。
 
@@ -76,6 +89,13 @@ Career Nova2 是一个跑在本机的求职工作台——不是 SaaS，不是�
 | **简历** | ✅ 已完成 | 上传 PDF/DOCX/MD → MarkItDown 转文档 → 后台抽事实进「信息库」；对话式生成/改写；人确认后才落库；版本化 + 回滚；HTML/PDF/Markdown 导出 |
 | **投递** | ✅ 已完成 | 岗位聚合（跨平台统一列表，猎聘 + 前程无忧）、去重、排序；投递跟进状态线；面试日历 |
 | **市场调研** | 🟡 基础可用 | 简历 agent 的 `query_market` 工具：现场查岗位量 / 城市 / 学历 / 年限 / 薪资分布 |
+
+<p>
+  <img src="docs/assets/screenshots/apply-list.png" alt="投递页：跨平台统一岗位列表" width="800">
+</p>
+<p>
+  <img src="docs/assets/screenshots/apply-analysis.png" alt="投递分析：统计图表 + 图文穿插报告" width="800">
+</p>
 
 > **更多在路上。** 尚未落地的方向见下方 [**未来展望**](#未来展望)——那是计划，不是现状。
 

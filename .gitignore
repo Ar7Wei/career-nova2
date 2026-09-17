@@ -83,4 +83,11 @@ docs/*
 docs/design/*
 !docs/design/apply.md
 !docs/design/resume.md
+# README 截图：docs/assets/screenshots/ 公开（两级：先放行目录，再放行内容）
+!docs/assets/
+docs/assets/*
+!docs/assets/screenshots/
+docs/assets/screenshots/*
+!docs/assets/screenshots/*.png
+!docs/assets/screenshots/README.md
 

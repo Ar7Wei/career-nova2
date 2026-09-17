@@ -25,7 +25,9 @@ Resumes, applications, and interview follow-ups in one place — all of it in a 
 
 </div>
 
-<!-- 📸 Screenshot placeholder: add app screenshots later -->
+<p>
+  <img src="docs/assets/screenshots/hero-main.png" alt="Career Nova2 main window" width="800">
+</p>
 
 ---
 
@@ -40,6 +42,10 @@ It does three things for you:
 - **Market** — ask what your target role actually demands, and it queries live job-board data to answer.
 
 It does *not* apply to jobs for you, and it does *not* decide where you go. **You filter, you apply, you decide** — it just takes the mechanical part off your hands.
+
+<p>
+  <img src="docs/assets/screenshots/resume-chat.png" alt="Conversational resume generation: chat + live preview" width="800">
+</p>
 
 ## Download & install
 
@@ -64,6 +70,13 @@ Just double-click to launch. **No Python, Node, or uv required** — the backend
    - **Works without a key** — only the AI features (resume optimization, conversational generation, market lookups) are unavailable. Managing postings and tracking applications still work.
    - Any **OpenAI-compatible endpoint** works (official API, DeepSeek, a local Ollama / vLLM, etc.).
 3. **Import a resume** — on the **Resume** page, upload your old PDF / DOCX / Markdown; experience is extracted into the knowledge base in the background. You can also just describe your experience in chat.
+
+<p>
+  <img src="docs/assets/screenshots/resume-list.png" alt="Resume page: uploaded resumes and extraction status" width="800">
+</p>
+<p>
+  <img src="docs/assets/screenshots/resume-export.png" alt="Resume preview and export (PDF / Markdown / HTML)" width="800">
+</p>
 4. **Scrape jobs** — on the **Applications** page, pick a board (Liepin / 51job) → set filters → scrape → dedup and sort into one unified list.
 5. **Change the data directory / port** — the **Settings** page lets you move the data directory (relocates the whole SQLite snapshot), change the backend port, and set close behavior.
 
@@ -76,6 +89,13 @@ Just double-click to launch. **No Python, Node, or uv required** — the backend
 | **Resume** | ✅ Done | Upload PDF/DOCX/MD → MarkItDown converts to a document → facts extracted in the background into a knowledge base; conversational generation and rewriting; nothing is saved until you confirm; versioning + rollback; HTML/PDF/Markdown export |
 | **Applications** | ✅ Done | Job aggregation (one cross-platform list — Liepin + 51job), dedup, sorting; application follow-up timeline; interview calendar |
 | **Market research** | 🟡 Functional | The resume agent's `query_market` tool: live counts by city / degree / experience / salary bands |
+
+<p>
+  <img src="docs/assets/screenshots/apply-list.png" alt="Applications page: one cross-platform job list" width="800">
+</p>
+<p>
+  <img src="docs/assets/screenshots/apply-analysis.png" alt="Application analysis: charts + mixed text/figure report" width="800">
+</p>
 
 > **More is on the way.** For directions that aren't built yet, see [**Roadmap**](#roadmap) below — that's the plan, not the current state.
 
