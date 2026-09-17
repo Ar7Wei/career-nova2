@@ -201,13 +201,14 @@
   display: none;
 }
 /* 折叠开关（2026-08-23 移入状态栏）：Mantine subtle 钮，这里只覆盖
-   状态栏特有的行高与「整列常显高亮、无 hover 底色」两处。 */
+   状态栏特有的行高与「整列常显高亮、无 hover 底色」两处。
+   字号在 tsx 里用 fz prop 传（Mantine 的 size="compact-sm" 会把 --button-fz 写成内联样式，
+   CSS 类里设同名变量压不过内联，只能靠 fz prop 在内联层级覆盖）。 */
 .statusbar-toggle {
   --button-height: auto !important;
   gap: var(--space-2);
   padding: 2px var(--space-2);
   line-height: var(--line-height-normal);
-  font-size: var(--font-size-lg);
   font-weight: var(--font-weight-medium);
   color: var(--color-ink); /* 常显主文字色，不做 hover 变化 */
 }
@@ -232,23 +233,23 @@
   line-height: var(--line-height-normal);
   font-weight: var(--font-weight-medium);
 }
-/* 版本号：淡落款色 + 等宽，与状态文字同排但更弱（是「信息」不是「状态」）。
-   margin-left:auto 归模型按钮所有，这里不争——版本号跟在连接状态之后自然排布。 */
+/* 版本号：淡落款色，与状态文字同排但更弱（是「信息」不是「状态」）。
+   margin-left:auto 归模型按钮所有，这里不争——版本号跟在连接状态之后自然排布。
+   字号/字体跟整栏统一（lg + 普通字体），只靠颜色拉开层级。 */
 .statusbar-version {
   color: var(--color-placeholder);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-lg);
   line-height: var(--line-height-normal);
+  margin-right: var(--space-3);
 }
-/* LLM 模型（可点击 → 跳设置页模型区）：Mantine subtle 钮，只覆盖等宽字体与淡落款色；
-   margin-left:auto 把状态文字留在左侧、模型顶到整列右端。无 hover 底色。 */
+/* LLM 模型（可点击 → 跳设置页模型区）：Mantine subtle 钮；
+   margin-left:auto 把状态文字留在左侧、模型顶到整列右端。无 hover 底色。
+   字号/字体跟整栏统一（lg + 普通字体），只靠颜色（落款色）区分。 */
 .statusbar-model {
   --button-height: auto !important;
   margin-left: auto;
   padding: 2px var(--space-1);
   color: var(--color-placeholder);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-lg);
   line-height: var(--line-height-normal);
 }
 .statusbar-model:hover {

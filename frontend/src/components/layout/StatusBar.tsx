@@ -68,6 +68,7 @@ export function StatusBar() {
         <Button
           variant="subtle"
           size="compact-sm"
+          fz="var(--font-size-lg)"
           className="statusbar-toggle"
           onClick={toggle}
           title={t(collapsed ? 'menu.expand' : 'menu.collapse')}
@@ -79,12 +80,13 @@ export function StatusBar() {
       </div>
       {/* 右列：连接状态（左）+ 版本号 + LLM 模型（贴右端） */}
       <div className="statusbar-right">
+        {version && <span className="statusbar-version">v{version}</span>}
         <span className={`status-dot ${dotClass}`} />
         <span className="statusbar-text">{label}</span>
-        {version && <span className="statusbar-version">v{version}</span>}
         <Button
           variant="subtle"
           size="compact-sm"
+          fz="var(--font-size-lg)"
           className="statusbar-model"
           onClick={goToModelSettings}
           title={t('settings.llmModel')}
