@@ -64,8 +64,11 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Career Nova2"
+      "shortcutName": "Career Nova2",
+      "artifactName": "Career-Nova2-Setup-${version}.${ext}"
     },
-    "portable": {}
+    "portable": {
+      "artifactName": "Career-Nova2-${version}.${ext}"
+    }
   }
 }

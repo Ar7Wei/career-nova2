@@ -160,9 +160,13 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: career-nova2-${{ steps.version.outputs.value }}-windows
-          # NSIS 安装器（Career Nova2 Setup *.exe）+ Portable（Career Nova2 *.exe）。
+          # 显式只收这两个产物，**不用 `*.exe` 通配**：electron-builder 会在同目录留
+          # `__uninstaller-nsis-*.exe` 之类的中间文件，通配会把它们一起收进来。
+          # 文件名模板在 electron/package.json 的 artifactName（NSIS 一个、portable 一个）。
           # 不带 *.blockmap——那是给自动更新做差分的，本应用用不上。
-          path: dist/installer/*.exe
+          path: |
+            dist/installer/Career-Nova2-Setup-*.exe
+            dist/installer/Career-Nova2-[0-9]*.exe
           if-no-files-found: error
 
       # 打 tag + 建 Release。tag 在**构建成功之后**才推——若前面任何一步失败，
@@ -191,10 +195,16 @@ jobs:
             git push origin $tag
           }
           # 只挂 NSIS + Portable 两个 exe；blockmap/builder-debug.yml 不上 Release。
+          # 显式按前缀收，**不用 `*.exe` 通配**——同目录可能留 `__uninstaller-nsis-*.exe`
+          # （electron-builder 的中间产物，不该发给用户）。
           # ⚠️ 传给原生命令必须用 @assets 展开：直接 $assets 会把所有路径拼成
           # 一个空格分隔的参数（gh 当成单个文件名），多文件时必炸。
-          $assets = @(Get-ChildItem dist/installer -File -Filter *.exe | ForEach-Object { $_.FullName })
-          if ($assets.Count -eq 0) { throw "dist/installer 下没有 .exe 产物" }
+          $assets = @(
+            Get-ChildItem dist/installer -File -Filter "Career-Nova2-*.exe" |
+              Where-Object { $_.Name -notlike "__uninstaller*" } |
+              ForEach-Object { $_.FullName }
+          )
+          if ($assets.Count -eq 0) { throw "dist/installer 下没有产物" }
           Write-Host "将上传 $($assets.Count) 个文件:"
           $assets | ForEach-Object { Write-Host "  $_" }
           gh release create $tag `
