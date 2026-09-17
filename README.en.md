@@ -1,4 +1,12 @@
+<div align="center">
+
+<img src="electron/assets/icon.png" alt="Career Nova" width="120">
+
 # Career Nova
+
+**Local-first, single-user, open-source desktop app for job hunting**
+
+Resumes, applications, and interview follow-ups in one place — all of it in a SQLite file on your own disk.
 
 <p>
   <b>English</b> · <a href="README.md">简体中文</a>
@@ -15,8 +23,7 @@
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
 </p>
 
-> **Local-first, single-user, open-source desktop app for job hunting.**
-> Resumes, applications, and interview follow-ups in one place — all of it in a SQLite file on your own disk.
+</div>
 
 <!-- 📸 Screenshot placeholder: add app screenshots later -->
 
@@ -67,11 +74,10 @@ Just double-click to launch. **No Python, Node, or uv required** — the backend
 | Module | Status | Notes |
 |---|---|---|
 | **Resume** | ✅ Done | Upload PDF/DOCX/MD → MarkItDown converts to a document → facts extracted in the background into a knowledge base; conversational generation and rewriting; nothing is saved until you confirm; versioning + rollback; HTML/PDF/Markdown export |
-| **Applications** | ✅ Done | Job aggregation (Liepin + 51job, one cross-platform list), dedup, sorting; application follow-up timeline; interview calendar |
-| **Market research** | 🟡 Partial | The resume agent's `query_market` tool: live counts by city / degree / experience / salary bands. **Broad "which direction is growing" probing is not built yet** |
-| **Application automation** | ⬜ Not started | Prefill, auto-apply, auto-detect outcomes — v1 is manual; automation is a deferred upgrade path |
-| **Chatter** (industry-doc RAG) | ⬜ Not started | Q&A over industry documents backed by sqlite-vec |
-| **Growth** | ⬜ Not started | — |
+| **Applications** | ✅ Done | Job aggregation (one cross-platform list — Liepin + 51job), dedup, sorting; application follow-up timeline; interview calendar |
+| **Market research** | 🟡 Functional | The resume agent's `query_market` tool: live counts by city / degree / experience / salary bands |
+
+> **More is on the way.** For directions that aren't built yet, see [**Roadmap**](#roadmap) below — that's the plan, not the current state.
 
 ## Design principles
 
@@ -109,7 +115,7 @@ Just double-click to launch. **No Python, Node, or uv required** — the backend
 
 | Layer | Choice |
 |---|---|
-| Shell | Electron 35 — tray residency, child-process lifecycle (`taskkill /F /T` full-tree kill + port verification), job-board DOM scraping, `printToPDF` export |
+| Shell | Electron 35 — tray residency, splash screen, child-process lifecycle (`taskkill /F /T` full-tree kill + port verification), job-board DOM scraping, `printToPDF` export |
 | Frontend | React 19 + TypeScript + Mantine v9 + zustand + Vite |
 | Backend | FastAPI + LangGraph (orchestration) + SQLModel + aiosqlite + structlog |
 | LLM | Any OpenAI-compatible endpoint (`base_url` + key configured in settings; model names fetched from a probe endpoint) |
@@ -178,14 +184,12 @@ Everything lands under `dist/`:
 
 ## Roadmap
 
-- [x] Resume parsing / optimization / conversational generation
-- [x] Job aggregation (Liepin + 51job)
-- [x] Application follow-up timeline + interview calendar
-- [x] Packaged distribution (installer, no Python/uv required — NSIS + Portable)
-- [ ] Application automation (prefill / auto-apply / auto-detect outcomes)
-- [ ] Chatter — industry-document RAG
-- [ ] Broad market probing ("which direction is growing")
-- [ ] Growth
+Directions that are planned but **not implemented yet**:
+
+- **Application automation** — prefill, auto-apply, auto-detect outcomes. The current release is manual; automation will land incrementally.
+- **Chatter (industry-doc RAG)** — feed it your own industry documents and ask questions, backed by local vector search.
+- **Broad market probing** — answering "which direction is growing" across roles and over time. Today's market tool only does one-shot lookups.
+- **Growth** — a longer-term career-growth direction; design is still open.
 
 ## Disclaimer
 
