@@ -39,6 +39,13 @@ for pkg in (
     "langgraph_checkpoint_sqlite",
     "deepagents",
     "markitdown",
+    # markitdown 的依赖缺口(打包漏收 → 上传 pdf/docx 等 500,dev 不现):
+    # - magika:MarkItDown() 初始化时建它做文件类型嗅探;模型目录 models/standard_v3_3
+    #   是纯数据文件(.onnx/.json),PyInstaller 默认只收 .py,必须 collect_all 收 datas。
+    #   magika 是 markitdown 的 extra 依赖,collect_all("markitdown") 不会顺藤摸到,须单列。
+    # - onnxruntime:magika 跑 .onnx 模型的推理引擎,编译组件(capi/*.dll/.pyd ~33MB)。
+    "magika",
+    "onnxruntime",
     "curl_cffi",
     "pypdfium2",
     "sqlite_vec",
@@ -50,6 +57,14 @@ for pkg in (
     datas += tmp_datas
     binaries += tmp_binaries
     hiddenimports += tmp_hiddenimports
+
+# onnxruntime 补丁:collect_all / collect_dynamic_libs 都漏掉 capi/onnxruntime_pybind11_state.pyd
+# (import onnxruntime 必加载的 Python 绑定层,.pyd 命名不在它们的扫描模式里),缺它打包后
+# import onnxruntime 即炸。显式按绝对路径补进 binaries,目标目录镜像 capi/ 结构。
+import onnxruntime as _ort  # spec 在打包环境跑,直接用真包定位
+_ort_capi = Path(_ort.__file__).parent / "capi"
+for _pyd in _ort_capi.glob("*.pyd"):
+    binaries.append((str(_pyd), "onnxruntime/capi"))
 
 # --- 元数据:importlib.metadata 读版本(langgraph/langchain 系运行时依赖)---
 for pkg in (
