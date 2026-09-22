@@ -696,9 +696,20 @@
 .chat-input-area {
   display: flex;
   align-items: flex-end;
+  flex-wrap: wrap; /* 超长提示条独占一行（basis 100%），其余照旧横排 */
   gap: var(--space-2);
   padding: var(--space-3);
   border-top: 1px solid var(--color-border-light);
+}
+/* 超长提示（2026-09-22）：draft 超 MAX_LEN 时显示，与发送禁用配套——前端先拦，不撞后端 422。
+   用柔红底（--color-error-soft）+ 错误红字，与同族错误气泡（.chat-event-error）观感一致。 */
+.chat-toolong-hint {
+  flex-basis: 100%;
+  font-size: var(--font-size-xs);
+  color: var(--color-error);
+  background: var(--color-error-soft);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
 }
 .chat-input {
   flex: 1;

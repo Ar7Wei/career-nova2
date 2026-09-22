@@ -122,6 +122,7 @@ export const zh = {
   resume: {
     upload: '上传简历',
     chatPlaceholder: '聊聊你的经历，或上传一份简历…',
+    chatTooLong: '内容太长了，单条最多 {max} 字（当前 {count} 字）',
     emptyTitle: '还没有简历',
     emptyDesc: '上传一份 PDF 或 DOCX，或直接在右侧和我聊，让我了解你。',
     emptyChatHint: '还没有简历？和右侧的助手聊聊吧，她会帮你一步步生成简历。',

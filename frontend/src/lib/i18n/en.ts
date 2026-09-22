@@ -124,6 +124,7 @@ export const en: Messages = {
   resume: {
     upload: 'Upload resume',
     chatPlaceholder: 'Tell me about your experience, or upload a resume…',
+    chatTooLong: 'Too long — max {max} characters per message (currently {count})',
     emptyTitle: 'No resume yet',
     emptyDesc: 'Upload a PDF or DOCX, or just chat with me on the right so I can learn about you.',
     emptyChatHint: 'Dont have a resume yet?hat with the assistant on the right about your experience — I\'ll help you build a resume step by step.',

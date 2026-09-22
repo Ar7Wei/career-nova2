@@ -23,7 +23,7 @@ class Message(BaseModel):
     model_config = {"extra": "ignore"}
 
     role: Literal["user", "assistant", "system", "event"] = Field(..., description="消息发送者角色；event = 系统气泡")
-    content: str = Field(..., description="消息内容", min_length=1, max_length=3000)
+    content: str = Field(..., description="消息内容（粘贴整段 JD/长经历属正常输入，上限 20000）", min_length=1, max_length=20000)
     kind: str = Field(default="", description="结构化动作类型（仅 event 行）：upload/generated/rolled_back/suggestion_hint/error_* 等，三档呈现判定用")
     ref_document_id: int | None = Field(default=None, description="事件引用的文档 id（仅 event 行；rolled_back = 被覆盖稿）")
 

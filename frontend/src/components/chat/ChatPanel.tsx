@@ -47,9 +47,14 @@ export function ChatPanel({
   const t = useT()
   const { containerRef, handleScroll } = useAutoScroll(messages)
 
+  // 单条消息上限与后端 Message.content 一致（app/schemas/chat.py，20000）。
+  // 前端先拦住：超长禁发 + 就地提示，不再让请求撞 422。
+  const MAX_LEN = 20000
+  const tooLong = draft.length > MAX_LEN
+
   const submit = () => {
     const text = draft.trim()
-    if (!text || workingStoppable || sendDisabled) return
+    if (!text || tooLong || workingStoppable || sendDisabled) return
     onSend(text)
     onDraftChange('')
   }
@@ -80,6 +85,11 @@ export function ChatPanel({
       </div>
 
       <div className="chat-input-area">
+        {tooLong && (
+          <div className="chat-toolong-hint" role="alert">
+            {t('resume.chatTooLong').replace('{max}', String(MAX_LEN)).replace('{count}', String(draft.length))}
+          </div>
+        )}
         <Textarea
           className="chat-input"
           classNames={{ input: 'chat-input-textarea' }}
@@ -101,7 +111,7 @@ export function ChatPanel({
             <Square size={14} />
           </Button>
         ) : (
-          <Button className="btn-icon btn-icon-send" variant="default" size="sm" aria-label={t('dev.send')} onClick={submit} disabled={!draft.trim() || sendDisabled}>
+          <Button className="btn-icon btn-icon-send" variant="default" size="sm" aria-label={t('dev.send')} onClick={submit} disabled={!draft.trim() || tooLong || sendDisabled}>
             <Send size={14} />
           </Button>
         )}
