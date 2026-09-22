@@ -22,8 +22,76 @@ permissions:
   contents: write
 
 jobs:
+  # 质量门：发版前先定型。backend(ruff+mypy) + frontend(typecheck+lint+build)
+  # + electron(node --check) 三源质量项顺序跑（ubuntu，一个 job 省 runner——发版频率低，
+  # 几分钟可接受）。挂了直接终止，release job 不会跑——「质量不过不打包」。
+  # 日常非发版 push 的质量保护仍由 backend/frontend/electron.yml 各自 paths 触发管，
+  # 与本流程分工：它们管日常，这条管发版前的总闸。
+  quality:
+    name: Quality gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install
+
+      # backend：只装 dev 组（ruff/mypy）。test 组刻意不装：开源树不含测试文件。
+      - name: Backend deps
+        run: uv sync --frozen --group dev
+
+      - name: Backend ruff
+        run: uv run ruff check .
+
+      - name: Backend mypy
+        run: uv run mypy .
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            electron/package-lock.json
+
+      # frontend：typecheck + lint + build（与 frontend.yml 同源）。
+      - name: Frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend typecheck
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: Frontend lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Frontend build
+        working-directory: frontend
+        run: npm run build
+
+      # electron：无 TS/lint 配置，自动化的静态检查只有语法解析
+      # （node --check 只解析不执行，不碰 electron 模块）。
+      - name: Electron deps
+        working-directory: electron
+        run: npm ci
+
+      - name: Electron syntax check
+        working-directory: electron
+        run: |
+          find . -name '*.js' -not -path './node_modules/*' -print0 \
+            | xargs -0 -n1 node --check
+
   release:
     name: Build & release
+    needs: quality
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -104,16 +172,6 @@ jobs:
       - name: Sync backend dependencies
         if: steps.gate.outputs.skip != 'true'
         run: uv sync --frozen --group dev
-
-      # 质量门：发版前先过 lint + type check，挂了直接终止、不打包。
-      # backend.yml 与 release.yml 是两条独立触发线（paths 过滤不同），彼此不知对方结果——
-      # 不在这里自查一遍，就可能「lint 红着照样打出带坏代码的安装包」。发版频率低，
-      # 重复这一两分钟值得。
-      - name: Quality gate (ruff + mypy)
-        if: steps.gate.outputs.skip != 'true'
-        run: |
-          uv run ruff check .
-          uv run mypy .
 
       - name: Build backend (PyInstaller onedir)
         if: steps.gate.outputs.skip != 'true'
