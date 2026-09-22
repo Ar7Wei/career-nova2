@@ -29,6 +29,8 @@ class TimelinePeriod:
 
 @dataclass
 class PeriodResult:
+    """一段算好的时间线：时长、距今、是否进行中。"""
+
     label: str
     start: str
     end: str  # 「至今」原样保留（可读）
@@ -40,6 +42,8 @@ class PeriodResult:
 
 @dataclass
 class GapResult:
+    """两段之间的空窗：月数 + 类型（当前/历史）。"""
+
     after_label: str  # 较早的一段（gap 在它结束之后）
     before_label: str  # 较晚的一段（gap 在它开始之前）
     months: int
@@ -51,6 +55,8 @@ class GapResult:
 
 @dataclass
 class OverlapResult:
+    """两段的时间重叠：双方标签 + 重叠月数。"""
+
     a_label: str
     b_label: str
     months: int  # 重叠时长
@@ -58,6 +64,8 @@ class OverlapResult:
 
 @dataclass
 class TimelineReport:
+    """一组时间段算完的汇总：逐段结果、空窗、重叠、总工龄。"""
+
     periods: list[PeriodResult] = field(default_factory=list)
     gaps: list[GapResult] = field(default_factory=list)
     overlaps: list[OverlapResult] = field(default_factory=list)
@@ -157,7 +165,7 @@ def calc_timeline(periods: list[TimelinePeriod], *, today: str) -> TimelineRepor
     gaps: list[GapResult] = []
     overlaps: list[OverlapResult] = []
     for i in range(len(ordered) - 1):
-        (pa, sa, ea), (pb, sb, eb) = ordered[i], ordered[i + 1]
+        (pa, _sa, ea), (pb, sb, eb) = ordered[i], ordered[i + 1]
         # 间隔 sb - ea：>1 才有完整空月（==1 = 首尾相接，如 6 月结束 7 月开始，正常衔接不算空窗）。
         # gap 月数 = 两段之间的完整空月数 = sb - ea - 1。**不设阈值**——算不算「值得聊的空窗」
         # 是 agent 的判断（299 天与 300 天无本质区别），工具只负责如实算出并标类型（当前/历史）。
