@@ -207,7 +207,7 @@ def _render_diagnostics(diags: list[GroupDiagnostic]) -> str:
     """每组召回诊断 → 紧凑文本（原始计数 + 样本标题，不下结论）。"""
     if not diags:
         return ""
-    lines = ["每组召回诊断（标题命中计数，仅供参考）："]
+    lines = ["每组召回诊断（标题命中计数，摸方向的佐证，不用于判断检索词）："]
     for d in diags:
         hits = "、".join(f"{w} {n}" for w, n in d.per_word.items())
         lines.append(
@@ -217,9 +217,9 @@ def _render_diagnostics(diags: list[GroupDiagnostic]) -> str:
         if d.sample_titles:
             lines.append(f"  样本标题：{'、'.join(d.sample_titles)}")
     lines.append(
-        "说明：平台对多词是「有交集按 AND、交集不足静默放宽成 OR」，且响应不给命中总数。"
-        "上面的「全命中」若远低于最大单词命中，说明这组词实际是按单词搜的——"
-        "它们被平台当成了并列词，而不是收窄词。"
+        "怎么读（只佐证方向，不验词）：召回近乎 0 → 这方向/这城可能没肉；样本标题全是无关岗 → "
+        "方向本身可能偏了。这些计数只说明「这方向有没有这回事」，**不能用来说明检索词写得好不好**——"
+        "检索词的事跟本工具无关。"
     )
     return "\n".join(lines)
 
