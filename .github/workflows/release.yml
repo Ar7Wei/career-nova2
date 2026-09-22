@@ -105,6 +105,16 @@ jobs:
         if: steps.gate.outputs.skip != 'true'
         run: uv sync --frozen --group dev
 
+      # 质量门：发版前先过 lint + type check，挂了直接终止、不打包。
+      # backend.yml 与 release.yml 是两条独立触发线（paths 过滤不同），彼此不知对方结果——
+      # 不在这里自查一遍，就可能「lint 红着照样打出带坏代码的安装包」。发版频率低，
+      # 重复这一两分钟值得。
+      - name: Quality gate (ruff + mypy)
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          uv run ruff check .
+          uv run mypy .
+
       - name: Build backend (PyInstaller onedir)
         if: steps.gate.outputs.skip != 'true'
         run: uv run pyinstaller backend.spec --clean
