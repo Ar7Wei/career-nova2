@@ -57,8 +57,10 @@
   --shadow-pop: 0 8px 30px rgba(16, 24, 40, 0.12);
   --shadow-input: inset 0 0 0 1px var(--color-border);
 
-  /* 玻璃拟态底（blur 也收成变量：特化几何的浮层可复用三件套而不抄 blur 字面值） */
-  --glass-bg: rgba(255, 255, 255, 0.72);
+  /* 玻璃拟态底（blur 也收成变量：特化几何的浮层可复用三件套而不抄 blur 字面值）。
+     2026-09-21：0.72 → 0.85——盖在浅色简历预览上空时 0.72 太透、文字发花，调高更不透明。
+     ⚠️ 与 src/theme/alger.ts 的 other.glassBg 同源：改这个值必须两处一起改。 */
+  --glass-bg: rgba(255, 255, 255, 0.85);
   --glass-border: rgba(255, 255, 255, 0.6);
   --glass-blur: blur(16px) saturate(1.8);
 

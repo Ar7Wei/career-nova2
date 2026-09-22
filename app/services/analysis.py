@@ -331,6 +331,17 @@ async def read_daily() -> AnalysisReportOut | None:
     return _narrative_out("daily", day, content, created)
 
 
+async def daily_has_input() -> bool:
+    """窗口内（截至昨天、往回 N 天）是否真有投递活动可分析。
+
+    没有就别起后台任务——否则后台算完发现空手、不写报告，前端会永远轮询 computing。
+    路由用它区分 "computing（真在算）" 与 "missing（这段没东西可算）"，与 batch/interview 对称。
+    取数口径与 `_load_daily_material` 一致（同一窗口）。
+    """
+    material = await _load_daily_material(_yesterday_local())
+    return bool(material.get("daily_events"))
+
+
 async def refresh_daily(*, force: bool = False) -> AnalysisReportOut:
     """已投递 tab 的日报：走 graph 算一份「截至昨天」的报告（落库缓存）。
 

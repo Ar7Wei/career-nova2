@@ -119,6 +119,9 @@ class ExtractedFact(BaseModel):
     title: str = Field(..., min_length=1, max_length=2000)
     points: list[str] = Field(default_factory=list)
     on_resume: bool = True  # 抽取时 LLM 判「该不该上简历」（ADR 0011）：敏感/不该上→False
+    # 2026-09-21 补：接住 prompt 要求模型输出的时间线（此前缺字段被 extra=ignore 静默丢弃，
+    # 工作/项目日期永远进不了库）。空串 = 无时间（姓名/技能等）。
+    occurred_at: str = ""
 
 
 class ParseCoverage(BaseModel):

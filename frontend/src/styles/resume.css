@@ -871,6 +871,20 @@
   flex-direction: column;
   gap: var(--space-1)
 }
+/* 单条经历条目 = FactItem + 时间线输入（2026-09-21）：日期独立成框，跟在条目下方。 */
+.extract-entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.extract-occurred-at {
+  /* 输入框对齐 FactItem 缩进；窄框，字号小一号（日期是辅助元信息）。 */
+  max-width: 16em;
+}
+.extract-occurred-at input {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
 .extract-group-label {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);

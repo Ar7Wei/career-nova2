@@ -56,6 +56,15 @@ def _language_instruction() -> str:
     return "始终用中文回答，无论用户用什么语言提问。"
 
 
+def _current_date_line() -> str:
+    """当前日期行（2026-09-21）：注入吃事实/时间的 prompt，让非对话 agent 能换算「至今」、判时长。
+
+    对话 agent（deep）每轮重建 prompt 已带精确时间戳（load_resume_agent_deep_prompt），且另有
+    calc_timeline 工具做灵活计算；这里给一次性 prompt（生成/改写/分析/开场）补一个日期锚点。
+    """
+    return f"今天是 {datetime.now().strftime('%Y-%m-%d')}。看到「至今」按今天换算实际时长；看到时间段留意距今多久、相邻经历间有无空窗/重叠。"
+
+
 def load_extract_facts_prompt(resume_markdown: str) -> str:
     """加载简历抽事实的 prompt（简历正文 + 覆盖率要求）。"""
     return _EXTRACT_FACTS_TEMPLATE.format(
@@ -108,6 +117,7 @@ def load_generate_resume_prompt(
         preferences=preferences or "（无自定义侧重）",
         instruction=instruction or "（无）",
         facts=facts or "（没有可用事实，请询问用户补充）",
+        current_date=_current_date_line(),
         language_instruction=_language_instruction(),
     )
 
@@ -145,6 +155,7 @@ def load_rewrite_content_prompt(
         facts_feedback=facts_feedback or "（无）",
         target_role=target_role or "（无指定目标岗位，不做侧重）",
         preferences=preferences or "（无自定义侧重）",
+        current_date=_current_date_line(),
         language_instruction=_language_instruction(),
     )
 
@@ -180,6 +191,7 @@ def load_opening_prompt(
         resume_document=resume_document or "（暂无简历）",
         info_gaps=info_gaps or "（关键信息齐全）",
         recent_changes=recent_changes or "（无）",
+        current_date=_current_date_line(),
         language_instruction=_language_instruction(),
     )
 
@@ -205,6 +217,7 @@ def load_analysis_batch_prompt(*, facts: str, round_summary: str, tone_note: str
         round_summary=round_summary,
         tone_note=tone_note,
         stats_summary=stats_summary or "（暂无统计）",
+        current_date=_current_date_line(),
         language_instruction=_language_instruction(),
     )
 
@@ -223,6 +236,7 @@ def load_analysis_daily_prompt(summary: str, stats_summary: str = "", tone_note:
         summary=summary,
         stats_summary=stats_summary,
         tone_note=tone_note,
+        current_date=_current_date_line(),
         language_instruction=_language_instruction(),
     )
 

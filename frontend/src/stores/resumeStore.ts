@@ -40,6 +40,8 @@ export interface ExtractCandidate {
   points: string[]
   /** 该不该上简历（后端抽取 LLM 判，ADR 0011）；默认 true */
   on_resume?: boolean
+  /** 事实时间线（如 "2018-2021"/"2021-至今"）；无日期为空串。2026-09-21 接通。 */
+  occurred_at?: string
 }
 
 /** 后端 GET /resume/extract-status 响应。 */

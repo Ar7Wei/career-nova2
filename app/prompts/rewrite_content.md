@@ -34,3 +34,6 @@
 
 # 用户自定义侧重（可选）
 {preferences}
+
+# 当前日期
+{current_date}

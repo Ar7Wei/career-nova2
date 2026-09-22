@@ -31,3 +31,6 @@
 {stats_summary}
 
 {tone_note}
+
+# 当前日期
+{current_date}

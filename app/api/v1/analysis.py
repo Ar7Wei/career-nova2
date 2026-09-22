@@ -73,6 +73,9 @@ async def applied_analysis() -> AnalysisReportOut:
     cached = await analysis_service.read_daily()
     if cached is not None:
         return cached
+    # 窗口内无投递活动 → 没东西可算，别起后台任务（否则前端永远轮询 computing）。
+    if not await analysis_service.daily_has_input():
+        return _placeholder("daily", key, "missing")
     if not analysis_service.is_computing("daily", key):
         _spawn(analysis_service.refresh_daily())
     return _placeholder("daily", key, "computing")

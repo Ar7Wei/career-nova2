@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import { Check, X, Plus, RefreshCw } from 'lucide-react'
-import { Button } from '@mantine/core'
+import { Button, TextInput } from '@mantine/core'
 import type { ExtractCandidate } from '@/stores/resumeStore'
 import { FactItem, type FactItemData } from '@/components/FactItem'
 import { useT } from '@/lib/i18n'
 
 const CATEGORY_ORDER: ExtractCandidate['category'][] = ['basic', 'education', 'work', 'projects', 'skill', 'other']
+
+/** 经历类分类：有独立时间线（occurred_at）可编辑；basic/skill/other 多为单句事实无日期。 */
+const DATED_CATEGORIES = new Set<ExtractCandidate['category']>(['education', 'work', 'projects'])
 
 /** 分类中文标签（可编辑卡片的展示用；后端 label 用 CATEGORY_LABELS）。 */
 const CATEGORY_LABELS: Record<ExtractCandidate['category'], string> = {
@@ -65,6 +68,11 @@ export function ExtractCard({ facts, onConfirm, onReject, onRetry, disabled }: E
     setEditingIdx(null)
   }
 
+  /** 改某条的时间线（occurred_at），就地更新、不进 FactItem 的编辑态。 */
+  const setOccurredAt = (idx: number, v: string) => {
+    setItems((prev) => prev.map((f, i) => (i === idx ? { ...f, occurred_at: v } : f)))
+  }
+
   const confirm = () => {
     setBusy(true)
     onConfirm(items.filter((f) => f.title.trim()))
@@ -83,16 +91,28 @@ export function ExtractCard({ facts, onConfirm, onReject, onRetry, disabled }: E
           <div key={cat} className="extract-group">
             <div className="extract-group-label">{CATEGORY_LABELS[cat]}</div>
             {entries.map(({ f, idx }) => (
-              <FactItem
-                key={idx}
-                value={{ title: f.title, points: f.points }}
-                editing={editingIdx === idx}
-                onEdit={() => setEditingIdx(idx)}
-                onCancel={() => setEditingIdx(null)}
-                onSave={(next) => saveEntry(idx, next)}
-                onDelete={() => remove(idx)}
-                disabled={locked}
-              />
+              <div key={idx} className="extract-entry">
+                <FactItem
+                  value={{ title: f.title, points: f.points }}
+                  editing={editingIdx === idx}
+                  onEdit={() => setEditingIdx(idx)}
+                  onCancel={() => setEditingIdx(null)}
+                  onSave={(next) => saveEntry(idx, next)}
+                  onDelete={() => remove(idx)}
+                  disabled={locked}
+                />
+                {/* 经历类条目带时间线（2026-09-21）：日期独立可编辑，不再挤进 title。 */}
+                {DATED_CATEGORIES.has(f.category) && (
+                  <TextInput
+                    className="extract-occurred-at"
+                    value={f.occurred_at ?? ''}
+                    onChange={(e) => setOccurredAt(idx, e.currentTarget.value)}
+                    placeholder={t('resume.extractOccurredAtPlaceholder')}
+                    size="sm"
+                    disabled={locked}
+                  />
+                )}
+              </div>
             ))}
             {/* 新增条目：L3 弱操作（原纯文字钮升级为 Mantine subtle，§10.2） */}
             <Button variant="default" size="compact-sm" onClick={() => addEntry(cat)} disabled={locked} leftSection={<Plus size={13} />}>

@@ -13,6 +13,8 @@ docstring 是 LLM 工具契约（schema + 使用时机），从 legacy 原样搬
 
 from typing import Any, cast
 
+from datetime import UTC, datetime
+
 from langchain_core.tools import tool
 
 from app.core.errors import ConflictError, EmptyOutputError, LLMUnavailableError
@@ -37,6 +39,7 @@ from app.services.facts import record_chat_facts, supersede_fact
 from app.services.market import query_market, render_market_snapshot
 from app.services.optimization import record_suggestion, update_suggestion
 from app.services.rewrite import generate_preview
+from app.services.timeline import TimelinePeriod, calc_timeline, render_timeline_report
 
 
 @tool("record_facts")
@@ -415,9 +418,38 @@ async def query_market_tool(
 
 
 # 9 个业务工具的清单（组装 deep agent 用；单一真相源，工具名只在 @tool 装饰器里写一次）。
+@tool("calc_timeline")
+async def calc_timeline_tool(
+    periods: list[dict[str, Any]],
+) -> str:
+    """算一组工作/项目/教育经历的时长、距今、空窗与重叠，用来判断时长权重、察觉时间线矛盾。
+
+    当你需要「量化」时间线时调它，别自己心算（跨年、含「至今」、多段求并集都容易算错）。
+    典型场景：对比两份工作的时长权重、看上一段与上上段之间有无空窗 gap、发现两份经历时间重叠
+    （全职经历重叠 = 数据矛盾，要及时跟用户核对纠正）、算「至今」到底有多久。
+
+    periods：时间段数组，每项 {start, end, label}：
+      - start / end：「YYYY」或「YYYY-MM」（如 "2018" / "2021-06"）；end 传 "至今"/"现在" 表进行中。
+      - label：这段叫什么（公司/项目名），便于在结果里指认，可留空。
+    返回：每段的时长（X 年 Y 个月）、距今多久、相邻空窗（gap 月数）、重叠对、总工龄（并集，重叠不重复计）。
+    """
+    parsed = [
+        TimelinePeriod(
+            start=str(p.get("start", "")),
+            end=(None if p.get("end") is None else str(p.get("end"))),
+            label=str(p.get("label", "")),
+        )
+        for p in periods
+        if isinstance(p, dict)
+    ]
+    today = datetime.now(UTC).date().isoformat()
+    return render_timeline_report(calc_timeline(parsed, today=today))
+
+
 TOOLS = [
     record_facts_tool,
     supersede_fact_tool,
+    calc_timeline_tool,
     suggest_improvements_tool,
     update_suggestion_tool,
     apply_suggestions_tool,

@@ -30,7 +30,10 @@ def flatten_facts(facts: list[Fact], *, bullet_title: bool = False, on_resume_on
     for f in facts:
         if on_resume_only and not f.on_resume:
             continue
-        lines.append((f"- [{f.category}] {f.title}") if bullet_title else f"[{f.category}] {f.title}")
+        # 2026-09-21：条目行带上时间线（occurred_at）——生成 agent 据此拆 startDate/endDate，
+        # 对话 agent 借此感知时长/gap。无日期不拼空括号。
+        title = f"{f.title}（{f.occurred_at}）" if f.occurred_at else f.title
+        lines.append((f"- [{f.category}] {title}") if bullet_title else f"[{f.category}] {title}")
         for p in f.points:
             lines.append(f"  - {p}")
     return "\n".join(lines)

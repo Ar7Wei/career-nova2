@@ -77,7 +77,8 @@ export const algerTheme = createTheme({
 
   // 自定义 token（自绘 CSS 经 CSS 变量读取；Mantine 组件不用但可经 useMantineTheme().other 取）
   other: {
-    glassBg: 'rgba(255, 255, 255, 0.72)',
+    // ⚠️ 与 styles/base.css 的 --glass-bg 同源：改这个值必须两处一起改。
+    glassBg: 'rgba(255, 255, 255, 0.85)',
     glassBorder: 'rgba(255, 255, 255, 0.6)',
     easeOut: 'cubic-bezier(0.16, 1, 0.3, 1)',
   },
@@ -123,6 +124,12 @@ export const algerTheme = createTheme({
         // sm 收 30（= 原生 xs 档高度）；xs 原生即 30，与 sm 天然同高，无需再动。
         wrapper: { '--input-height': size === 'sm' ? '30px' : undefined },
       }),
+      styles: {
+        // 底色收敛白底：Mantine default 输入框是 gray-0 浅灰，叠在玻璃浮窗上发灰显脏；
+        // 面板内其他可点件（触发钮 / 日期 pill）都是 --color-panel 白。Input 是
+        // TextInput/TagsInput/NumberInput/Select 共同基类，一处覆盖全部输入控件。
+        input: { background: 'var(--color-panel)' },
+      },
     }),
     ActionIcon: ActionIcon.extend({
       vars: (_theme, { size }) => ({

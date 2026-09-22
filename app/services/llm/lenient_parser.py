@@ -34,6 +34,8 @@ _FIELD_ALIASES: dict[str, list[str]] = {
     "category": ["type", "category_name", "classification"],
     "title": ["text", "value", "content", "description", "detail", "entry", "name"],
     "points": ["sub_points", "children", "items", "bullets", "details", "subitems"],
+    # 2026-09-21 补：occurred_at 时间线（ExtractedFact 新增字段），模型自由发挥的常见写法。
+    "occurred_at": ["date", "dates", "period", "duration", "time_range", "time", "date_range"],
     "detected_sections": ["detected", "detected_count", "sections_detected"],
     "extracted_sections": ["extracted", "extracted_count", "sections_extracted"],
     "note": ["notes", "comment", "summary", "coverage_note"],
