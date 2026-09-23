@@ -248,6 +248,21 @@ async def list_preferences(kind: str | None = None) -> list[PreferenceSchema]:
         return [_to_preference(r) for r in rows]
 
 
+async def add_custom_preference(scope: str, content: str) -> None:
+    """记一条跨版本 custom 偏好（改简历决定）：同 scope 的旧 custom 行先删再插新行（新顶旧）。
+
+    矛盾裁决（方案 A）：同 scope 只留最新一条——用户后做的决定覆盖先做的。
+    只作用 kind="custom"；reject 偏好（版本变更结清记"拒掉这一类"）机制不同，不动。
+    """
+    async with async_session_maker() as session:
+        stmt = select(Preference).where(Preference.kind == "custom", Preference.scope == scope)  # type: ignore[arg-type]
+        olds = (await session.exec(stmt)).all()
+        for old in olds:
+            await session.delete(old)
+        session.add(Preference(kind="custom", scope=scope, content=content))
+        await session.commit()
+
+
 async def clear_all_preferences() -> int:
     """清空全部用户判定偏好（核爆用），返回删除行数。
 

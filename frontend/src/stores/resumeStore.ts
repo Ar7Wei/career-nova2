@@ -1121,6 +1121,9 @@ export const useResumeStore = create<ResumeState>((set, get) => ({
         return null
       }
       await useResumeStore.getState().loadVersions()
+      // 确认后当前文档 = 新稿：重载当前文档刷新 currentVersion + 预览（markdown/html/typography）。
+      // 漏掉这步会让左栏停在旧版——预览跳回上一稿、「第N稿」标签不更新，得点「回看」才能看到新稿。
+      await useResumeStore.getState().loadCurrent()
       // 版本变更 = 干净轮回：后端已开新 session + 写入「已保存为新版本」事件（§11.3），
       // loadChatHistory 切到新 session 把事件带回来（旧实现注释承诺清消息但没做，已修）
       await useResumeStore.getState().loadChatHistory()

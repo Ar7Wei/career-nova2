@@ -56,6 +56,7 @@ async def cold_start_node(state: RewriteState) -> Command:
     new_json = await generate_json_from_facts(
         target_role=state.target_role or None,
         instruction=state.user_request,
+        preferences=state.preferences,
     )
     logger.info("rewrite_cold_start_generated", json_chars=len(new_json))
     return Command(update={

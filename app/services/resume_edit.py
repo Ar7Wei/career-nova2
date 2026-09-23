@@ -68,11 +68,15 @@ async def generate_json_from_facts(
     *,
     target_role: str | None = None,
     instruction: str = "",
+    preferences: str | None = None,
 ) -> str:
     """Facts → 结构化 resume JSON（生成路径；冷启动「开始改/改简历」也复用）。
 
     target_role：目标岗位（可空 = 通用版）；instruction：冷启动注入的改进要求
     （已确认建议 / 用户改简历请求，生成时一并满足）。
+    preferences：custom 偏好文本（方案 A 选项 1）——由调用方（cold_start_node）从
+      state.preferences 透传，与暖态 content 节点同一数据源；传 None 时回退到本函数
+      内部现读（保留旧行为，兼容直接调用方）。
     返回结构化真身 JSON 字符串。无 facts → ConflictError（无法生成）。
     2026-09-07（ADR 0012 合并）：事实覆盖校验统一交图机器门（validate_content 自愈回边），
     本函数不再自带 raise 断言（避免与暖态双标）；整份空仍由 _call_resume 拦（坏答案识别）。
@@ -80,9 +84,10 @@ async def generate_json_from_facts(
     facts_text = await build_facts_text()
     if not facts_text:
         raise ConflictError("还没有任何用户事实，无法生成简历——先在聊天里聊聊你的经历吧")
-    prefs = await list_preferences(kind="custom")
-    prefs_text = "\n".join(f"- {p.content}" for p in prefs)
-    prompt = load_generate_resume_prompt(target_role or "", facts_text, prefs_text, instruction)
+    if preferences is None:
+        prefs = await list_preferences(kind="custom")
+        preferences = "\n".join(f"- {p.content}" for p in prefs)
+    prompt = load_generate_resume_prompt(target_role or "", facts_text, preferences, instruction)
     resume = await _call_resume(prompt, "模型没生成出简历内容，换个说法再试或换模型")
     return resume_to_json(resume)
 

@@ -37,7 +37,7 @@ from app.services.chat_tools._common import (
 from app.services.direction import commit_direction, refine_direction, set_direction_changed, set_pending_disposal
 from app.services.facts import record_chat_facts, supersede_fact
 from app.services.market import query_market, render_market_snapshot
-from app.services.optimization import record_suggestion, update_suggestion
+from app.services.optimization import record_custom_preference, record_suggestion, update_suggestion
 from app.services.rewrite import generate_preview
 from app.services.timeline import TimelinePeriod, calc_timeline, render_timeline_report
 
@@ -280,8 +280,37 @@ async def generate_resume_tool(
     return "已出一版简历草稿（暂存预览态，未保存）。请用户看左侧预览：确认就保存为新版本，不满意可「带意见重改」或继续说要求。"
 
 
+@tool("record_resume_rule")
+async def record_resume_rule_tool(scope: str, content: str) -> str:
+    """记一条**跨版本**的改简历长期规则（custom 偏好）——以后每一版生成/改写都遵守。
+
+    仅当用户做了一个**长期、跨版本**的决定时调用，不是一次性微调。典型：
+    - **板块归并**："以后不要项目经历栏，内容并进工作经历"（scope 如 `projects_block`）。
+      注意：这是把事实归并进别的板块，**不是**屏蔽事实——项目事实仍上简历，只是不单独开栏。
+    - **风格/语言**："语言要精简""成果都要量化、别写流水账"（scope 如 `language_style`）。
+    - **详略/篇幅**："自我评价别写""技能只列核心的"（scope 如 `detail_level`）。
+
+    **不要**用本工具记：只针对当前这一版/这一处的改动（如"把腾讯那条改一下"）——
+    那是一次性修改请求，直接走 generate_resume/对话即可，不记长期规则。
+
+    判别：带「以后/都/每次/一律/别再」等词、说的是一个**类别**（板块/风格）而非单个实例、
+    下一版也该遵守 → 长期规则，记。倾向记、别太克制（同 scope 新规则会顶掉旧的，总量也小）。
+
+    **记完必须告知用户**（硬约束）：调完用一句话说记了条长期规则、以后每版都这么来——
+    记错了用户能当场纠正。详见 optimize 技能「跨版本决定」一节。
+
+    - scope：规则作用域（短标签，同类用同一标签——如 `projects_block`/`language_style`）。
+      同一 scope 的新规则会**顶掉**旧规则（矛盾时以最新决定为准）。
+    - content：规则内容（一句话说清怎么做）。
+    """
+    scope = scope.strip()
+    content = content.strip()
+    if not scope or not content:
+        return "scope 或 content 为空，未记录任何规则。"
+    return await record_custom_preference(scope, content)
+
+
 def _format_current(d: Direction) -> str:
-    """当前方向 → 一行人话（refine 工具转述「当前方向」。如「全栈工程师 · 杭州/成都」）。"""
     cities = "/".join(c for c in d.cities if c)
     return f"{d.role or '未指定岗位'} · {cities or '城市未定'}"
 
@@ -456,6 +485,7 @@ TOOLS = [
     calc_timeline_tool,
     suggest_improvements_tool,
     update_suggestion_tool,
+    record_resume_rule_tool,
     apply_suggestions_tool,
     generate_resume_tool,
     refine_direction_tool,

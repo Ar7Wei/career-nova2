@@ -18,6 +18,7 @@ from app.core.errors import ConflictError
 from app.core.logging import logger
 from app.repositories.documents import latest_document
 from app.repositories.optimization import (
+    add_custom_preference,
     add_preference,
     add_suggestion,
     get_suggestion,
@@ -373,6 +374,18 @@ async def clear_settled_for_new_version(new_document_id: int, *, discard: bool =
     if rejected_by_type:
         logger.info("preferences_recorded_on_version_change", types=sorted(rejected_by_type))
     return counts
+
+
+async def record_custom_preference(scope: str, content: str) -> str:
+    """记一条跨版本 custom 偏好（方案 A：agent 把改简历决定持久化，每版注入生成/改写 prompt）。
+
+    同 scope 新顶旧（矛盾时后决定覆盖先决定）。返回给人/agent 看的确认文案。
+    """
+    scope = scope.strip()
+    content = content.strip()
+    await add_custom_preference(scope, content)
+    logger.info("custom_preference_recorded", scope=scope)
+    return f"已记下这条长期规则（{scope}）：{content}——以后每一版都会遵守。"
 
 
 async def get_preferences() -> str:

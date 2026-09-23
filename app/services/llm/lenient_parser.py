@@ -48,10 +48,69 @@ _FIELD_ALIASES: dict[str, list[str]] = {
 _CATEGORY_KEYS = {"basic", "education", "work", "projects", "skill", "other"}
 
 
-def _extract_json(text: str) -> Any:
-    """从 LLM 输出文本里提取 JSON：容忍 markdown 代码块包裹、首尾杂字。
+def _balanced_json_blocks(text: str) -> list[str]:
+    r"""扫出文本里全部顶层平衡 ``{...}`` 块（含字符串/转义感知），按出现顺序返回子串。
 
-    依次尝试：① 整段是 JSON ② 代码块内的 JSON ③ 第一个平衡的 {...} 块。
+    多块场景：DeepSeek json_object 抖动时会把 ``{"type":"json_object",...}`` 信封
+    当内容复读出来、与真身 JSON 用 ``\n`` 粘连——这里是两个并列的顶层块。
+    """
+    blocks: list[str] = []
+    start = -1
+    depth = 0
+    in_str = False
+    escape = False
+    for i, ch in enumerate(text):
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start != -1:
+                    blocks.append(text[start : i + 1])
+                    start = -1
+    return blocks
+
+
+def _schema_score(schema: Type[BaseModel] | None, payload: Any) -> int:
+    """Payload 命中 schema 顶层字段的个数（含 ``_FIELD_ALIASES`` 别名）。
+
+    信封 ``{"type","summary"}`` 对 Resume 命中 0~1（summary 撞 note 别名）；
+    真身 ``{"basics","work",...}`` 命中多个 → 真身稳赢。非 dict / 无 schema → 0。
+    facts 分类漂移（``{"work":[...]}`` 顶层是分类名）对含 facts 的 schema 也算命中——
+    否则漂移真身与信封同 0 分，多块挑选会回退到信封、丢真身。
+    """
+    if schema is None or not isinstance(payload, dict):
+        return 0
+    fields = getattr(schema, "model_fields", {})
+    score = 0
+    for field_name in fields:
+        if field_name in payload or any(a in payload for a in _FIELD_ALIASES.get(field_name, [])):
+            score += 1
+    if score == 0 and "facts" in fields and any(k in payload for k in _CATEGORY_KEYS):
+        score = 1  # 分类名当顶层 key 的 facts 漂移真身
+    return score
+
+
+def _extract_json(text: str, schema: Type[BaseModel] | None = None) -> Any:
+    """从 LLM 输出文本里提取 JSON：容忍 markdown 代码块包裹、首尾杂字、脏信封粘连。
+
+    依次尝试：① 整段是 JSON ② 代码块内的 JSON ③ 顶层平衡 {...} 块。
+    第 ③ 步收集**全部**顶层块后按 schema 形状挑选（2026-09-23）：单块照旧返回（零回归）；
+    多块（DeepSeek 把 ``{"type":"json_object",...}`` 信封复读在前、真身在后）按
+    「命中 schema 顶层字段数」选最像目标的那块，平局/全 0 回退第一个块（保守不更差）。
+    schema=None 时退化为「第一个块」（对无 schema 调用方零影响）。
     失败返回 None。
     """
     text = text.strip()
@@ -67,34 +126,19 @@ def _extract_json(text: str) -> Any:
             return json.loads(fence.group(1).strip())
         except json.JSONDecodeError:
             pass
-    start = text.find("{")
-    if start == -1:
+    candidates: list[Any] = []
+    for block in _balanced_json_blocks(text):
+        try:
+            candidates.append(json.loads(block))
+        except json.JSONDecodeError:
+            continue  # 坏块跳过，不阻断其余候选
+    if not candidates:
         return None
-    depth = 0
-    in_str = False
-    escape = False
-    for i in range(start, len(text)):
-        ch = text[i]
-        if in_str:
-            if escape:
-                escape = False
-            elif ch == "\\":
-                escape = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    return json.loads(text[start : i + 1])
-                except json.JSONDecodeError:
-                    break
-    return None
+    if len(candidates) == 1 or schema is None:
+        return candidates[0]
+    # 多块：按 schema 形状选最像目标的（信封在前、真身在后的粘连靠这道救回）。
+    best = max(candidates, key=lambda c: _schema_score(schema, c))
+    return best if _schema_score(schema, best) > 0 else candidates[0]
 
 
 def _normalize_item(schema: Type, item: dict[str, Any]) -> dict[str, Any]:
@@ -242,10 +286,19 @@ def _lenient_parse(text: str, schema: Type[T]) -> T:
     """
     # DEBUG 记录 LLM 原始输出（截断 1500 字符），排查「200 但 facts 空」这类输出不稳定问题。
     logger.debug("lenient_parse_input", text=text[:1500])
-    raw = _extract_json(text)
+    raw = _extract_json(text, schema)
     if raw is None:
         logger.warning("lenient_parse_no_json_found")
         return schema()
+    # 单一包装键拆包（2026-09-23）：DeepSeek 抖动时把真身嵌进
+    # ``{"type":"json_object","content":{...真身...}}`` 的 content/data/result 键里，
+    # 顶层只剩 type+一个 dict 值键。内层比外层更像目标 schema 时剥一层，取真身。
+    if isinstance(raw, dict) and schema is not None:
+        dict_vals = [(k, v) for k, v in raw.items() if isinstance(v, dict)]
+        if len(dict_vals) == 1 and set(raw) <= {"type", "json", dict_vals[0][0]} and dict_vals[0][0] in {"content", "data", "result"}:
+            inner = dict_vals[0][1]
+            if _schema_score(schema, inner) > _schema_score(schema, raw):
+                raw = inner
     payload: dict[str, Any]
     if isinstance(raw, list):
         payload = {"facts": raw}
