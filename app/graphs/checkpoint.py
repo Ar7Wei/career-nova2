@@ -113,3 +113,26 @@ def get_checkpointer() -> AsyncSqliteSaver | None:
 async def reset_checkpoint_store() -> None:
     """测试复位：关闭并清空装配单例（与 extract_state.reset_state 同构）。"""
     await close_checkpoint_store()
+
+
+async def delete_threads_by_prefix(prefix: str) -> int:
+    """按 thread_id 前缀清掉一批 thread 的全部 checkpoint + writes（如 "chat:" 清所有聊天记忆）。
+
+    用于核爆（reset_all）：简历世界重置后，旧 chat thread 的工作记忆一并清掉——不只为止血，
+    也防 checkpoints.db 只增不减地膨胀。resume_epoch 隔离已保证旧 thread 不会被命中，这里
+    是物理清除。无连接（:memory: 测试）→ 返回 0。返回删除的 checkpoint 行数。
+
+    checkpointer 不提供按前缀删的 API（adelete_thread 只认单个 thread_id），底层连接直删——
+    本模块本就独占这个文件，是它份内的维护。
+    """
+    if _conn is None:
+        return 0
+    like = f"{prefix}%"
+    cur = await _conn.execute("SELECT COUNT(DISTINCT thread_id) FROM checkpoints WHERE thread_id LIKE ?", (like,))
+    row = await cur.fetchone()
+    n_threads = int(row[0]) if row else 0
+    await _conn.execute("DELETE FROM checkpoints WHERE thread_id LIKE ?", (like,))
+    await _conn.execute("DELETE FROM writes WHERE thread_id LIKE ?", (like,))
+    await _conn.commit()
+    logger.info("checkpoint_threads_deleted", prefix=prefix, threads=n_threads)
+    return n_threads

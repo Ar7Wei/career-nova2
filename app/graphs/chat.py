@@ -128,22 +128,31 @@ def get_chat_graph(force: bool = False) -> CompiledStateGraph:
     return _graph
 
 
-def chat_graph_config(session_id: int) -> RunnableConfig:
-    """对话图的 config：thread_id=chat:{session_id}（每版本一 session 天然隔离）。"""
-    return {"configurable": {"thread_id": thread_id("chat", str(session_id))}}
+def chat_graph_config(session_id: int, resume_epoch: int) -> RunnableConfig:
+    """对话图的 config：thread_id=chat:{resume_epoch}:{session_id}（2026-09-24 带世界代次）。
+
+    代次（resume_epoch）隔离：核爆（reset_all）与版本回滚（rollback）都 bump resume_epoch——
+    代次一变，旧 thread_id 永不命中，agent 不会把上一段「世界」的工作记忆（旧 session 的
+    改动讨论）捞回来。这修的是「核爆后 id 归零重算 → 新会话 thread 撞上旧残留 → 幻视」，
+    以及「回滚后旧 thread 成哑弹」两个同根问题。
+
+    resume_epoch 由调用方（service 层）读好传入——graph 不碰 DB（分层铁律）。
+    """
+    return {"configurable": {"thread_id": thread_id("chat", f"{resume_epoch}:{session_id}")}}
 
 
-async def run_chat_agent(session_id: int, user_text: str) -> str:
+async def run_chat_agent(session_id: int, user_text: str, resume_epoch: int) -> str:
     """跑对话 deep agent，返回助手最终回复文本。
 
-    session_id：当前 session id（决定 thread_id → 从 checkpointer 恢复历史）。
+    session_id：当前 session id（与 resume_epoch 一起决定 thread_id → 从 checkpointer 恢复历史）。
     user_text：本轮用户新消息（增量式——checkpoint 里已有历史，只追加这条）。
+    resume_epoch：简历世界代次（service 层读好传入），参与 thread_id 派生做记忆隔离。
     返回：助手最终回复纯文本。
     """
     graph = get_chat_graph()
     result = await graph.ainvoke(
         {"messages": [{"role": "user", "content": user_text}]},
-        config=chat_graph_config(session_id),
+        config=chat_graph_config(session_id, resume_epoch),
     )
     # 最终回复 = 最后一条 AIMessage 的文本内容（无 tool_calls）。
     messages = result.get("messages", [])
@@ -162,7 +171,7 @@ def reset_chat_graph() -> None:
     _impl_model_name = None
 
 
-async def retract_last_user_message_from_graph(session_id: int) -> str | None:
+async def retract_last_user_message_from_graph(session_id: int, resume_epoch: int) -> str | None:
     """Deep 撤回（甲方案）：从 checkpointer 精准删最后一条 user 消息，返回其原文。
 
     双投影一致性（2026-09-09）：表删了最后 user 消息，checkpointer 的 thread 也得删
@@ -171,12 +180,13 @@ async def retract_last_user_message_from_graph(session_id: int) -> str | None:
     撤回真实场景 = 停止后那轮 agent 被 cancel、没产出回复，thread 里最后一条即该
     user 消息。用 RemoveMessage(id=...) 精准删（按 id 移除，reducer 识别删除指令），
     不动其它消息。无 checkpointer（:memory: 测试）或无 user 消息 → 返回 None（幂等）。
+    resume_epoch 参与 thread_id 派生（与 run_chat_agent 同一代次才定位得到同一条 thread）。
     """
     checkpointer = get_checkpointer()
     if checkpointer is None:
         return None
     graph = get_chat_graph()
-    cfg = chat_graph_config(session_id)
+    cfg = chat_graph_config(session_id, resume_epoch)
     state = await graph.aget_state(cfg)
     messages = state.values.get("messages", [])
     last_user = next((m for m in reversed(messages) if m.type == "human"), None)

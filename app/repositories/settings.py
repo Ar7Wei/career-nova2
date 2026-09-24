@@ -69,15 +69,43 @@ async def save_degraded_providers(providers: list[str]) -> None:
         await session.commit()
 
 
+def _read_meta(row_value: str | None) -> dict:
+    """解析 app_meta 行 JSON 为 dict；无记录/坏 JSON → 空 dict（各计数器走 .get 默认 0）。
+
+    app_meta 一行存多个系统计数器（data_epoch 爬虫守卫、resume_epoch 简历世界代次）——
+    读写都先合并再写回，**不整份覆盖**，否则两个 bump 会互相抹掉对方的键。
+    """
+    if row_value is None:
+        return {}
+    try:
+        value = json.loads(row_value)
+        return value if isinstance(value, dict) else {}
+    except (json.JSONDecodeError, ValueError):
+        return {}
+
+
+async def _write_meta(meta: dict) -> None:
+    """整份写回 app_meta 行（调用方负责先 _read_meta 合并好再传）。"""
+    async with async_session_maker() as session:
+        row = (await session.exec(select(Setting).where(Setting.key == _META_KEY))).first()
+        value = json.dumps(meta)
+        if row is None:
+            row = Setting(key=_META_KEY, value=value)
+            session.add(row)
+        else:
+            row.value = value
+            row.updated_at = datetime.now(UTC)
+        await session.commit()
+
+
 async def get_data_epoch() -> int:
     """读数据代次（核爆计数器）；无记录 = 0（出厂态）。"""
     async with async_session_maker() as session:
         row = (await session.exec(select(Setting).where(Setting.key == _META_KEY))).first()
-        if row is None:
-            return 0
+        meta = _read_meta(row.value if row else None)
         try:
-            return int(json.loads(row.value).get("data_epoch", 0))
-        except (json.JSONDecodeError, ValueError, AttributeError):
+            return int(meta.get("data_epoch", 0))
+        except (ValueError, TypeError):
             return 0
 
 
@@ -89,19 +117,38 @@ async def bump_data_epoch() -> int:
     """
     async with async_session_maker() as session:
         row = (await session.exec(select(Setting).where(Setting.key == _META_KEY))).first()
-        current = 0
-        if row is not None:
-            try:
-                current = int(json.loads(row.value).get("data_epoch", 0))
-            except (json.JSONDecodeError, ValueError, AttributeError):
-                current = 0
-        new_epoch = current + 1
-        value = json.dumps({"data_epoch": new_epoch})
-        if row is None:
-            row = Setting(key=_META_KEY, value=value)
-            session.add(row)
-        else:
-            row.value = value
-            row.updated_at = datetime.now(UTC)
-        await session.commit()
-        return new_epoch
+        meta = _read_meta(row.value if row else None)
+    new_epoch = int(meta.get("data_epoch", 0) or 0) + 1
+    meta["data_epoch"] = new_epoch
+    await _write_meta(meta)
+    return new_epoch
+
+
+async def get_resume_epoch() -> int:
+    """读简历世界代次（聊天记忆隔离计数器，2026-09-24）；无记录 = 0（出厂态）。
+
+    职责与 data_epoch 分开：data_epoch 管爬虫核爆守卫，resume_epoch 管「简历世界切换」——
+    核爆（reset_all）与版本回滚（rollback）都升它。chat 的 thread_id 带这个代次，
+    代次一变旧 thread 永不命中（agent 不会把上一段世界的工作记忆捞回来）。
+    """
+    async with async_session_maker() as session:
+        row = (await session.exec(select(Setting).where(Setting.key == _META_KEY))).first()
+        meta = _read_meta(row.value if row else None)
+        try:
+            return int(meta.get("resume_epoch", 0))
+        except (ValueError, TypeError):
+            return 0
+
+
+async def bump_resume_epoch() -> int:
+    """简历世界代次 +1（核爆/回滚时调用）。
+
+    与 data_epoch 共存于 app_meta 行、读写合并，互不覆盖。返回新代次。
+    """
+    async with async_session_maker() as session:
+        row = (await session.exec(select(Setting).where(Setting.key == _META_KEY))).first()
+        meta = _read_meta(row.value if row else None)
+    new_epoch = int(meta.get("resume_epoch", 0) or 0) + 1
+    meta["resume_epoch"] = new_epoch
+    await _write_meta(meta)
+    return new_epoch

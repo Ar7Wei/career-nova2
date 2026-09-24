@@ -25,6 +25,7 @@ from app.services.chat_tools._assembly import begin_turn
 from app.services.direction import clear_pending_disposal, get_pending_disposal, get_direction_changed, clear_direction_changed
 from app.services.llm import run_with_cancel
 from app.services.optimization import count_open_records
+from app.repositories import get_resume_epoch
 from app.services.rewrite import get_preview
 from app.services.sessions import (
     current_session,
@@ -43,9 +44,11 @@ async def _run_agent(sid: int, text: str) -> tuple[str, bool]:
     run_chat_agent 吃单条新消息，历史从 checkpointer 恢复，摘要靠 SummarizationMiddleware。
     version_changed 恒 False——出稿走人门挂起预览，不写版本（确认走独立端点）。
     装配注入（工具 + 重建 prompt 函数）在跑前调一次（幂等，service → graph 单向）。
+    resume_epoch 由 service 读好传入（graph 不碰 DB），参与 thread_id 派生做记忆隔离。
     """
     chat_tools.inject_into_graph()
-    reply = await run_chat_agent(sid, text)
+    resume_epoch = await get_resume_epoch()
+    reply = await run_chat_agent(sid, text, resume_epoch)
     return reply, False
 
 
@@ -201,8 +204,10 @@ async def stop_chat(retract: bool = False) -> ChatStopResponse:
                 retracted_text = text
                 # 双投影一致（甲方案，2026-09-09）：表删了，checkpointer 的 thread 也得删
                 # 同一条 user 消息——否则 agent 下次恢复上下文还看得到已撤回的话，表与
-                # agent 记忆脱钩。
-                await retract_last_user_message_from_graph(send_sid)
+                # agent 记忆脱钩。resume_epoch 与发送轮同代（撤回发生在同一世界代次内，
+                # 核爆/回滚会先有动作切走世界，撤不到旧 thread）。
+                resume_epoch = await get_resume_epoch()
+                await retract_last_user_message_from_graph(send_sid, resume_epoch)
 
     # 再 set event 触发取消（handle_message 收尾写「已停止回复」事件）
     ev.set()

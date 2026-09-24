@@ -28,7 +28,8 @@ from app.repositories.crawl_state import clear_all_crawl_state
 from app.repositories.analysis import clear_all_reports
 from app.repositories.jobs import clear_all_followup_events, clear_all_interviews, clear_all_jobs, epoch_write_guard
 from app.repositories.optimization import clear_all_change_records, clear_all_preferences
-from app.repositories.settings import bump_data_epoch
+from app.repositories.settings import bump_data_epoch, bump_resume_epoch
+from app.graphs.checkpoint import delete_threads_by_prefix
 from app.schemas.documents import ResumeDocument, ResumeUploadResponse
 from app.schemas.facts import FactCreate, FactSource, FactUpdate
 from app.schemas.resume import Typography, resume_from_json
@@ -269,6 +270,13 @@ async def reset_all() -> dict[str, int]:
         # 完提交，bump 后到，清空会连那批已提交岗位一起删。两向都无孤儿。
         async with epoch_write_guard():
             epoch = await bump_data_epoch()
+        # 简历世界代次 +1 + 物理清旧聊天记忆（2026-09-24）：核爆把 chat_sessions/chat_messages
+        # 清空后 session id 归零重算，新会话 thread_id 会撞上 checkpoints.db 里的旧残留——
+        # agent 恢复上下文时把上一段世界的改动讨论全捞回来（幻视）。bump resume_epoch 让
+        # 新 thread_id（chat:{epoch}:{sid}）与旧的不在同一个 key 空间；delete_threads_by_prefix
+        # 物理删掉旧 chat thread（止血 + 防 checkpoints.db 膨胀）。
+        await bump_resume_epoch()
+        chat_threads_cleared = await delete_threads_by_prefix("chat:")
         await settings_service.update_settings(AppSettingsPatch(apply_mode=False))
         facts = await delete_all_facts()
 
@@ -303,6 +311,7 @@ async def reset_all() -> dict[str, int]:
             crawl_state=crawl_state,
             sessions=sessions,
             originals=originals_deleted,
+            chat_threads_cleared=chat_threads_cleared,
         )
         return {
             "documents": docs,
@@ -415,6 +424,11 @@ async def rollback(document_id: int) -> tuple[ResumeDocument, bool]:
         # ⚠️ 旧快照（records_json 为 NULL，升级前打的）在 _restore_workspace 里降级为
         # 「只还原事实、不动改动记录」——不能拿 None 去清空当前记录。
         workspace_restored = await _restore_workspace(snapshot) if snapshot is not None else False
+        # 简历世界代次 +1（2026-09-24）：回滚是一次「世界切换」——工作台回到 vN 开始的样子，
+        # agent 若还带着 vN 之后的对话记忆就会幻视（拿已作废稿的讨论当现状）。bump resume_epoch
+        # 让新 session 的 thread_id（chat:{epoch}:{sid}）落在新代次，旧 thread 即使保留
+        # （软作废的只读历史）也成了点不燃的哑弹。不删旧 thread——历史要留痕。
+        await bump_resume_epoch()
         # 版本变更 = 开新 session（§11.1），绑定目标稿 id
         sess = await open_session(document_id=doc.id)
         opening_session_id = sess.id  # 钉死在本轮 session，锁外发引导用（不落错轮）
