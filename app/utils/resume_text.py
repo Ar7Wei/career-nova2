@@ -1,7 +1,7 @@
 """简历「给 prompt 的文本表示」纯函数（分层铁律：纯函数，不碰 DB、不知道 LLM 存在）。
 
 放在 utils 而非 services/documents.py，是为了让 opening.py 也能用而不成环：
-`services/documents.py` 顶部 `from app.services.opening import persist_opening`，
+`services/documents.py` 顶部 `from app.services.opening import schedule_opening`，
 opening 若反过来 import documents 就成环。本模块只依赖 schemas，无环。
 """
 

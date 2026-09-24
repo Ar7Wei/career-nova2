@@ -70,12 +70,14 @@ interface HtmlPreviewProps {
     导出供自动一页的隐藏测量 iframe 复用（量高要带完整排版含 gutter，与真实渲染一致）。 */
 export function injectScale(html: string, typography: Typography, pageZoom: number): string {
   // 控件 A 排版自由度（数据层）：注入 :root 排版变量覆盖。默认值不注（模板自带，省字符）。
+  // 解构出的字段名与后端 Typography 一致（蛇形，无转换层）；右侧 CSS 变量名
+  // （--scale/--lh/--spacing/--ls/--gutter）是模板约定，另起一名，别把两边混为一谈。
   let rules = ''
-  const { scale, lineHeight, spacing, letterSpacing, gutter } = typography
+  const { scale, line_height, spacing, letter_spacing, gutter } = typography
   if (scale !== 1) rules += `--scale:${scale};`
-  if (lineHeight !== 1.25) rules += `--lh:${lineHeight};`
+  if (line_height !== 1.25) rules += `--lh:${line_height};`
   if (spacing !== 1) rules += `--spacing:${spacing};`
-  if (letterSpacing !== 0) rules += `--ls:${letterSpacing}px;`
+  if (letter_spacing !== 0) rules += `--ls:${letter_spacing}px;`
   if (gutter !== 55) rules += `--gutter:${gutter}px;`
   if (rules) rules = `:root{${rules}}`
   if (pageZoom !== 1) rules += `html{zoom:${pageZoom}}` // 控件 B 整页缩放（真实重排布局）

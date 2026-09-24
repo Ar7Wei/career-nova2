@@ -164,7 +164,7 @@ async def latest_superseded() -> ResumeDocumentOut | None:
     """读「最近被软作废回滚覆盖的那版」：id 最大的 superseded 稿。
 
     §11.8 已回滚引导「这版改了什么」的数据源——回滚把当前稿（id 最大非 superseded）
-    标成 superseded，这条就是被覆盖稿；查它的 applied 建议（list_applied_for_document）
+    标成 superseded，这条就是被覆盖稿；查它的结清记录（`list_records_settled_in`）
     能说出「上一版改过哪些点、现在撤回了」。无 superseded 稿返回 None。
     """
     async with async_session_maker() as session:

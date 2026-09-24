@@ -10,7 +10,7 @@
 「算一次存一次」：有缓存直接返回 ready；没有则起后台任务（同一 scope+key 防重入）返回
 computing，前端轮询到 ready。**不阻塞请求**——LLM 慢，展开面板不该干等。
 
-「改进」按钮的收录走 `/optimization/promote`（proposed → pending），不在这儿。
+「改进」按钮的收录走 `/optimization/promote`（落一条改动记录、结清原处方行），不在这儿。
 """
 
 import asyncio

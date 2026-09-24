@@ -22,7 +22,7 @@ from app.core.logging import logger
 from app.prompts import load_opening_prompt
 from app.repositories.documents import latest_document
 from app.repositories.facts import list_facts
-from app.repositories.optimization import list_applied_for_document
+from app.repositories.optimization import list_records_settled_in
 from app.services.facts import compute_info_gaps, render_info_gaps
 from app.services.llm import llm_service
 from app.services.sessions import current_session, record_assistant_message
@@ -54,24 +54,48 @@ async def _facts_text() -> str:
 
 
 async def _recent_changes_text(document_id: int | None) -> str:
-    """「这版改了哪些点」：查某稿应用的 confirmed 建议（§12.3 软标记）。
+    """「这版改了哪些点」：查某稿结清的改动记录（§12.3 软标记）。
 
-    generated：当前版应用的 confirmed 建议；rolled_back：被覆盖稿（调用方已按
-    ref_document_id 精确给出，不再事后反推）。无建议改动时回退说明文字。
+    generated：当前版应用的改动记录；rolled_back：被覆盖稿（调用方已按
+    ref_document_id 精确给出，不再事后反推）。无改动时回退说明文字。
+    2026-09-23：改读复合表 change_records（原因 + 改动点）。
     """
     if document_id is None:
         return "（无）"
-    applied = await list_applied_for_document(document_id)
-    if not applied:
-        return "（整份生成 / 无逐条优化建议记录）"
-    return "\n".join(f"- [{s.type}] {s.target}：{s.original} → {s.suggested}（{s.reason}）" for s in applied)
+    records = await list_records_settled_in(document_id)
+    lines = [
+        f"- {c.target}：{c.original} → {c.suggested}（{r.reason}）"
+        for r in records
+        for c in r.changes
+    ]
+    if not lines:
+        return "（整份生成 / 无逐条改动记录）"
+    return "\n".join(lines)
 
 
-async def generate_opening_content(stage: str, covered_document_id: int | None = None, cancel_event: asyncio.Event | None = None) -> str:
+_ROLLBACK_HINT = (
+    "用户刚从第 {frm} 稿回滚到第 {to} 稿（回滚后的当前稿就是第 {to} 稿）。"
+    "**开场三件事，按顺序说清**：① **从哪退到哪**——明说「从第 {frm} 稿退回了第 {to} 稿」；"
+    "② **放弃了哪些变化**——看下面的「这次放弃的工作」逐条说清（没写就说明这轮没有未完成的改动）；"
+    "③ **现在回到什么状态**——工作台（资料集 + 改动记录）已整份恢复成第 {to} 稿开始时的样子，"
+    "当时没聊完的点又回到面板上等着接着聊。然后问他接下来想怎么调整。"
+)
+
+
+async def generate_opening_content(
+    stage: str,
+    covered_document_id: int | None = None,
+    cancel_event: asyncio.Event | None = None,
+    from_version: int | None = None,
+    to_version: int | None = None,
+    discarded: str = "",
+) -> str:
     """生成引导文本（不落库）。
 
     stage：uploaded / generated / rolled_back。covered_document_id：仅 rolled_back 用
     （被覆盖稿——回滚把当前稿标 superseded 后，查"这版改了什么"得指向被覆盖的那版）。
+    from_version / to_version / discarded：仅 rolled_back 用——说清「从哪退到哪、放弃了哪些变化」。
+    ⚠️ `discarded` 由调用方在**恢复快照之前**捞好传进来：恢复会按快照重建改动记录，恢复后查不到。
     cancel_event：真暂停信号（stop_opening set），透传给 llm_service 用于中途取消调用。
 
     失败抛 LLMUnavailableError / EmptyOutputError，由 persist_opening 接住转诚实说明。
@@ -83,8 +107,15 @@ async def generate_opening_content(stage: str, covered_document_id: int | None =
     # 其余阶段用当前稿。
     changes_doc = covered_document_id if stage == "rolled_back" else (doc.id if doc else None)
     changes = await _recent_changes_text(changes_doc)
+    stage_hint = _STAGE_HINTS.get(stage, "")
+    if stage == "rolled_back":
+        # 回滚专用口径（2026-09-24）：说清从哪退到哪 + 放弃了哪些变化。
+        frm = from_version if from_version is not None else (doc.version + 1 if doc else 0)
+        to = to_version if to_version is not None else (doc.version if doc else 0)
+        stage_hint = _ROLLBACK_HINT.format(frm=frm, to=to)
+        changes = discarded or "（这一轮没有未完成的改动被放弃）"
     prompt = load_opening_prompt(
-        stage_hint=_STAGE_HINTS.get(stage, ""),
+        stage_hint=stage_hint,
         facts=await _facts_text(),
         resume_document=resume_prompt_text(doc),
         info_gaps=gaps,
@@ -98,7 +129,15 @@ async def generate_opening_content(stage: str, covered_document_id: int | None =
     return content.strip()
 
 
-async def persist_opening(stage: str, covered_document_id: int | None = None, session_id: int | None = None, cancel_event: asyncio.Event | None = None) -> None:
+async def persist_opening(
+    stage: str,
+    covered_document_id: int | None = None,
+    session_id: int | None = None,
+    cancel_event: asyncio.Event | None = None,
+    from_version: int | None = None,
+    to_version: int | None = None,
+    discarded: str = "",
+) -> None:
     """动作时刻：生成引导并落库为当前 session 的一条 assistant 消息（§11.8）。
 
     生成成功 → 个性化引导；LLM 失败 → 诚实说明（不抛异常，不阻断动作）。
@@ -107,9 +146,17 @@ async def persist_opening(stage: str, covered_document_id: int | None = None, se
     session_id：调用方已钉定的目标 session（后台调度用，见 schedule_opening）；
     None = 运行时取 current_session()。
     cancel_event：真暂停信号，透传给 generate_opening_content。
+    from_version / to_version / discarded：仅 rolled_back 用（说清从哪退到哪、放弃了哪些变化）。
     """
     try:
-        content = await generate_opening_content(stage, covered_document_id, cancel_event=cancel_event)
+        content = await generate_opening_content(
+            stage,
+            covered_document_id,
+            cancel_event=cancel_event,
+            from_version=from_version,
+            to_version=to_version,
+            discarded=discarded,
+        )
     except asyncio.CancelledError:
         # 被 stop_opening 取消：用户主动停了开场引导。CancelledError 是 BaseException，
         # 不能靠下方 except Exception 接——这里显式接住，不落消息、不向上抛（否则
@@ -131,28 +178,52 @@ async def persist_opening(stage: str, covered_document_id: int | None = None, se
     logger.info("opening_persisted", session_id=sess.id, stage=stage)
 
 
-async def _persist_opening_safe(stage: str, covered_document_id: int | None, session_id: int | None, cancel_event: asyncio.Event | None) -> None:
+async def _persist_opening_safe(
+    stage: str,
+    covered_document_id: int | None,
+    session_id: int | None,
+    cancel_event: asyncio.Event | None,
+    from_version: int | None = None,
+    to_version: int | None = None,
+    discarded: str = "",
+) -> None:
     """后台任务兜底：未 await 的任务不能静默爆炸。
 
     persist_opening 已自兜 LLM 失败与取消，但 DB 等意外异常不该让 fire-and-forget 任务
     抛「Task exception was never retrieved」刷日志——这里统一接住并记录。
     """
     try:
-        await persist_opening(stage, covered_document_id, session_id=session_id, cancel_event=cancel_event)
+        await persist_opening(
+            stage,
+            covered_document_id,
+            session_id=session_id,
+            cancel_event=cancel_event,
+            from_version=from_version,
+            to_version=to_version,
+            discarded=discarded,
+        )
     except Exception:  # noqa: BLE001 - fire-and-forget 必须兜底，否则异常无人收
         logger.exception("opening_schedule_failed", stage=stage)
 
 
-def schedule_opening(stage: str, covered_document_id: int | None = None, session_id: int | None = None) -> None:
+def schedule_opening(
+    stage: str,
+    covered_document_id: int | None = None,
+    session_id: int | None = None,
+    from_version: int | None = None,
+    to_version: int | None = None,
+    discarded: str = "",
+) -> None:
     """fire-and-forget 版 persist_opening：动作接口秒回，引导在后台生成后落库。
 
     确认入库（confirm_extract）这类「无版本变更」的动作，不该被「生成开场引导」的
-    一次 LLM 往返拖住整个确认请求（用户反馈：确认卡片后等太久）。这里把引导丢后台，
-    落库后由前端短轮询聊天历史带回来。
-    版本变更动作（生成/回滚/应用建议）仍走同步 persist_opening——那些动作本就在等
-    新稿落定，引导作为新 session 第一条消息同步落库、顺序确定，不改成后台。
+    一次 LLM 往返拖住整个确认请求（用户反馈：确认卡片后等太久）。**回滚**（2026-09-24）
+    同理——它此前同步 await persist_opening，用户点确认后要等 LLM 回来才看到回退。
+    两处都改用本函数，落库后由前端短轮询聊天历史带回来。
     session_id：钉定「调度时刻」的当前 session，避免后台任务跑完时 current_session
-    已因后续动作切到别的 session（引导落错轮）。
+    已因后续动作切到别的 session（引导落错轮）；**回滚调用方在持文档锁期间取好 id 传进来**。
+    from_version / to_version / discarded：仅 rolled_back 用（说清从哪退到哪、放弃了哪些变化），
+    随参数透传给 persist_opening——回滚的参数由调用方在恢复快照前捞好后一并交给本函数。
 
     真暂停（2026-08-30）：为本次后台引导新建独立 cancel_event 存入 _opening_cancel_event，
     stop_opening set 它 → generate_opening_content 的 LLM 调用被中途取消、不落消息。
@@ -160,7 +231,17 @@ def schedule_opening(stage: str, covered_document_id: int | None = None, session
     global _opening_cancel_event
     cancel_event = asyncio.Event()
     _opening_cancel_event = cancel_event
-    asyncio.create_task(_persist_opening_safe(stage, covered_document_id, session_id, cancel_event))
+    asyncio.create_task(
+        _persist_opening_safe(
+            stage,
+            covered_document_id,
+            session_id,
+            cancel_event,
+            from_version=from_version,
+            to_version=to_version,
+            discarded=discarded,
+        )
+    )
 
 
 def stop_opening() -> bool:

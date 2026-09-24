@@ -3,8 +3,11 @@ import type { Typography } from '@/stores/resumeStore'
 /**
  * 自动一页求解器（2026-09-02 grill 定稿）：纯函数，零 DOM/网络，便于测试。
  *
- * 只解 3 个松紧参数（scale/lineHeight/spacing）；gutter/letterSpacing 冻结不动
- * （gutter 是版式结构、letterSpacing 影响宽度不影响高度，都不进求解器）。
+ * 只解 3 个松紧参数（scale/line_height/spacing）；gutter/letter_spacing 冻结不动
+ * （gutter 是版式结构、letter_spacing 影响宽度不影响高度，都不进求解器）。
+ *
+ * 注意两套命名的边界：`SOLVE_RANGE`/`ParamRange` 里的键（如 `lineHeight`）是**求解器自己的
+ * 范围常量**，与 Typography 字段名无关，保持驼峰；访问 Typography 时一律用其蛇形真实字段名。
  *
  * 算法 = 预估锚点 + 等比例协同小步 + 撞限让位：
  * - 高度近似随 scale 线性，先以 r = 目标/实测 估锚；
@@ -60,11 +63,11 @@ export async function solveOnePage(
   let hi: Typography | null = null // 太大（需往小压）
   let lo: Typography | null = null // 太小（需往大放）
 
-  /** 三参数在 a、b 之间取中点（gutter/letterSpacing 取 a 的冻结值）。 */
+  /** 三参数在 a、b 之间取中点（gutter/letter_spacing 取 a 的冻结值）。 */
   const mid = (a: Typography, b: Typography): Typography => ({
     ...a,
     scale: round2((a.scale + b.scale) / 2),
-    lineHeight: round2((a.lineHeight + b.lineHeight) / 2),
+    line_height: round2((a.line_height + b.line_height) / 2),
     spacing: round2((a.spacing + b.spacing) / 2),
   })
 
@@ -79,7 +82,7 @@ export async function solveOnePage(
   let current: Typography = {
     ...start,
     scale: round2(clamp(start.scale * anchor, SOLVE_RANGE.scale)),
-    lineHeight: round2(clamp(start.lineHeight * anchor, SOLVE_RANGE.lineHeight)),
+    line_height: round2(clamp(start.line_height * anchor, SOLVE_RANGE.lineHeight)),
     spacing: round2(clamp(start.spacing * anchor, SOLVE_RANGE.spacing)),
   }
 
@@ -99,13 +102,13 @@ export async function solveOnePage(
       ? {
           ...start,
           scale: SOLVE_RANGE.scale.min,
-          lineHeight: SOLVE_RANGE.lineHeight.min,
+          line_height: SOLVE_RANGE.lineHeight.min,
           spacing: SOLVE_RANGE.spacing.min,
         }
       : {
           ...start,
           scale: SOLVE_RANGE.scale.max,
-          lineHeight: SOLVE_RANGE.lineHeight.max,
+          line_height: SOLVE_RANGE.lineHeight.max,
           spacing: SOLVE_RANGE.spacing.max,
         }
     const he = await measure(edge)

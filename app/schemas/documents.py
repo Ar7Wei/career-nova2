@@ -82,14 +82,15 @@ class ResumeCurrentResponse(BaseModel):
 
 
 class RollbackRequest(BaseModel):
-    """回滚请求：目标文档 id（唯一身份）+ 要不要连事实快照一起回滚。
+    """回滚请求：目标文档 id（唯一身份）。
 
     2026-08-12 身份锚定：按 **document_id**（id 唯一、永不复用），不按 version——
     version 是显示标签（软作废后可复用，同号可能一作废一当前两条），按 version 会撞错稿。
+    2026-09-24：`include_facts` 开关已删——回滚 = **整份恢复该版开始时的工作台**
+    （资料集 + 改动记录），不给用户一个会产生半吊子状态的选择。
     """
 
     document_id: int = Field(..., ge=1)
-    include_facts: bool = False
 
 
 class RollbackResponse(BaseModel):
@@ -97,10 +98,12 @@ class RollbackResponse(BaseModel):
 
     2026-08-10 软作废回滚：不复制新版本，直接回到目标稿（目标之后全标 superseded）。
     version = 目标稿号（当前 = 目标），下一个版本 = 目标+1（序号连续）。
+    2026-09-24：`facts_restored` 改名 `workspace_restored`——恢复的是整个工作台
+    （资料集 + 改动记录），不再只是事实。
     """
 
     version: int
-    facts_restored: bool
+    workspace_restored: bool
 
 
 class ResumeResetRequest(BaseModel):
@@ -117,7 +120,7 @@ class ResumeResetResponse(BaseModel):
     documents: int
     snapshots: int
     facts: int
-    pending: int = 0
+    records: int = 0  # 改动记录（change_records）
     sessions: int = 0  # 重置连会话一起清（S1-6，2026-08-13）
 
 
@@ -131,7 +134,7 @@ class ResetAllResponse(BaseModel):
     documents: int = 0
     snapshots: int = 0
     facts: int = 0
-    pending: int = 0
+    records: int = 0
     preferences: int = 0
     followup_events: int = 0
     jobs: int = 0

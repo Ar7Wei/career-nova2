@@ -42,10 +42,12 @@ const CATEGORY_LABELS: Record<Fact['category'], string> = {
 export function FactsPanel() {
   const t = useT()
   // S7 统一 busy：资料集是「写事实库」的操作点——busy 期间禁增删改 + 浮窗盖毛玻璃。
+  // 2026-09-24：回滚正在整份换资料集，写入必须锁（否则改动会被恢复覆盖掉）。
   const applying = useResumeStore((s) => s.applying)
   const generating = useResumeStore((s) => s.generating)
-  const busy = applying || generating
-  const busyLabel = applying ? t('resume.busyApplying') : t('resume.busyAgentWorking')
+  const rollingBack = useResumeStore((s) => s.rollingBack)
+  const busy = applying || generating || rollingBack
+  const busyLabel = rollingBack ? t('resume.rollingBack') : applying ? t('resume.busyApplying') : t('resume.busyAgentWorking')
   const [facts, setFacts] = useState<Fact[]>([])
   const [loading, setLoading] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)

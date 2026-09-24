@@ -78,20 +78,21 @@ def load_resume_agent_deep_prompt(
     facts: str,
     preferences: str,
     resume_document: str,
-    pending_suggestions: str,
+    change_records: str,
     info_gaps: str = "",
 ) -> str:
     """加载 deep agent 的瘦身版 system prompt（前台接待员定位 + 按需查技能）。
 
     与 legacy 版区别：去掉了已拆进技能的四块（grill/采集/优化/方向）的全文，改为
     「场景技法」段指向技能清单，按需 read_file 读全文（渐进披露省 token）。
+    change_records = 当前改动记录面板（原因 + 子改动点，含各自状态）。
     """
     return _RESUME_AGENT_DEEP_TEMPLATE.format(
         agent_name=settings.PROJECT_NAME,
         facts=facts or "（暂无已收录事实）",
-        preferences=preferences or "（暂无自定义偏好）",
+        preferences=preferences or "（暂无持久决策）",
         resume_document=resume_document or "（暂无简历，通过聊天了解用户）",
-        pending_suggestions=pending_suggestions or "（无待执行建议）",
+        change_records=change_records or "（暂无改动记录）",
         info_gaps=info_gaps,
         current_date_and_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         language_instruction=_language_instruction(),
@@ -114,7 +115,7 @@ def load_generate_resume_prompt(
     """
     return _GENERATE_RESUME_TEMPLATE.format(
         target_role=target_role or "（无指定目标岗位，生成通用版）",
-        preferences=preferences or "（无自定义侧重）",
+        preferences=preferences or "（无持久决策）",
         instruction=instruction or "（无）",
         facts=facts or "（没有可用事实，请询问用户补充）",
         current_date=_current_date_line(),
@@ -135,7 +136,6 @@ def load_rewrite_content_prompt(
     resume_json: str,
     user_request: str,
     facts: str = "",
-    facts_feedback: str = "",
     target_role: str = "",
     preferences: str = "",
 ) -> str:
@@ -143,8 +143,8 @@ def load_rewrite_content_prompt(
 
     2026-09-01：facts = 资料集当前事实，暖态编辑只补缺口（JSON 权威，facts 不覆盖）；
     无事实时留空。
-    2026-09-07（ADR 0012 机器门）：facts_feedback = 机器门反馈的硬性补回清单（漏事实时
-    喂回 content，要求把这些事实折回对应 block，而非软补缺口）；无反馈时留空。
+    2026-09-23：机器门回边已停，`facts_feedback` 参数与模板里的「硬性补回」段一并删除
+    （判据太糙、罚一切改写，见 graphs/rewrite.py 的 MAX_ITERATIONS 注释）。
     2026-09-07（ADR 0012 合并）：target_role/preferences = 侧重信号，生成改写都喂
     （只指导内容侧重、不写进成品）。
     """
@@ -152,9 +152,8 @@ def load_rewrite_content_prompt(
         resume_markdown=resume_json,
         user_request=user_request,
         facts=facts or "（暂无已收录事实）",
-        facts_feedback=facts_feedback or "（无）",
         target_role=target_role or "（无指定目标岗位，不做侧重）",
-        preferences=preferences or "（无自定义侧重）",
+        preferences=preferences or "（无持久决策）",
         current_date=_current_date_line(),
         language_instruction=_language_instruction(),
     )

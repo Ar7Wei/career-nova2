@@ -52,6 +52,11 @@ _ADD_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("occurred_at", "ALTER TABLE user_facts ADD COLUMN occurred_at TEXT NULL"),
         ("on_resume", "ALTER TABLE user_facts ADD COLUMN on_resume BOOLEAN DEFAULT 1"),
     ],
+    "resume_snapshots": [
+        # 2026-09-24：快照从「只含资料集」扩大为「工作台」（资料集 + 改动记录）。
+        # 旧行此列为 NULL → 回滚时降级为「只还原事实、不动改动记录」，不清空当前记录。
+        ("records_json", "ALTER TABLE resume_snapshots ADD COLUMN records_json TEXT NULL"),
+    ],
 }
 
 

@@ -47,50 +47,47 @@ export function VersionReview() {
   const review = useResumeStore((s) => s.review)
   const currentVersion = useResumeStore((s) => s.currentVersion)
   const rollbackTo = useResumeStore((s) => s.rollbackTo)
+  const beginRollback = useResumeStore((s) => s.beginRollback)
   const closeReview = useResumeStore((s) => s.closeReview)
   const loadPendingCount = useResumeStore((s) => s.loadPendingCount)
   // S7（2026-08-14）统一锁定：正在回复 / 应用建议改写中，回滚按钮灰掉（写动作禁用，
   // 回看本身仍放开——纯读不锁）。rollbackTo 里的 toast 是冲破限制时的兜底。
+  // 2026-09-24：回滚进行中（rollingBack）也灰掉——同一次回看的按钮不该被连点第二遍。
   const generating = useResumeStore((s) => s.generating)
   const applying = useResumeStore((s) => s.applying)
-  const rollbackDisabled = generating || applying
+  const rollingBack = useResumeStore((s) => s.rollingBack)
+  const rollbackDisabled = generating || applying || rollingBack
   const nativeText = useBlobText(review?.resumeUrl ?? null, review?.resumeExt ?? '')
 
   if (!review) return null
 
-  /** 回滚到当前：从回看界面触发，走现有回滚流程（含 pending 建议警告，ResumePage.handleRollback 同构）。 */
+  /** 回滚到此版：走回滚流程（数据操作 + 新 session + 聊天清空，store.rollbackTo）。
+   *  2026-09-24：整份恢复该版**开始时**的工作台（资料集 + 改动记录），不再有「连事实一起」
+   *  开关——「只回文档不回工作台」会留下锚在旧内容上的待办，是半吊子状态。
+   *  还有未定论的点时先弹一道警告（它们会随工作台回到目标版开始的样子）。 */
   const handleRollback = async () => {
     await loadPendingCount()
     const pending = useResumeStore.getState().pendingSuggestionCount
-    const confirm = () => {
-      modals.openConfirmModal({
-        title: t('resume.rollback'),
-        centered: true,
-        children: <p style={{ whiteSpace: 'pre-wrap' }}>{t('resume.rollbackConfirm')}</p>,
-        labels: { confirm: t('common.confirm'), cancel: t('common.cancel') },
-        confirmProps: { color: 'green' },
-        onConfirm: () => {
-          void rollbackTo(review.id, true)
-          closeReview()
-        },
-        onCancel: () => {
-          void rollbackTo(review.id, false)
-          closeReview()
-        },
-      })
+    const doRollback = () => {
+      // 乐观回退（2026-09-24）：先切界面（进乐观态 → 关回看后由 ResumePage 按 rollbackTarget
+      // 渲染目标稿 + 「正在回滚…」），再发**很慢**的回滚请求——否则用户点完要干等后端，像「没反应」。
+      // 顺序：beginRollback → closeReview（把 blob URL 移交给 rollbackTarget，不 revoke）→ 发请求。
+      beginRollback()
+      closeReview()
+      void rollbackTo(review.id)
     }
-    if (pending > 0) {
-      modals.openConfirmModal({
-        title: t('resume.versionHistory'),
-        centered: true,
-        children: <p style={{ whiteSpace: 'pre-wrap' }}>{t('resume.rollbackClearPending').replace('{n}', String(pending))}</p>,
-        labels: { confirm: t('common.confirm'), cancel: t('common.cancel') },
-        confirmProps: { color: 'green' },
-        onConfirm: confirm,
-      })
-      return
-    }
-    confirm()
+    modals.openConfirmModal({
+      title: pending > 0 ? t('resume.versionHistory') : t('resume.rollback'),
+      centered: true,
+      children: (
+        <p style={{ whiteSpace: 'pre-wrap' }}>
+          {pending > 0 ? t('resume.rollbackClearPending').replace('{n}', String(pending)) : t('resume.rollbackConfirm')}
+        </p>
+      ),
+      labels: { confirm: t('common.confirm'), cancel: t('common.cancel') },
+      confirmProps: { color: 'green' },
+      onConfirm: doRollback,
+    })
   }
 
   return (

@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import api, { AppApiError } from '@/lib/api'
 import { emit } from '@/lib/events'
 import { userErrorText } from '@/lib/errors'
-import { initialWelcomeMessages, type ChatMessage } from '@/types/resume'
+import { initialWelcomeMessages, type ChangeRecord, type ChatMessage } from '@/types/resume'
 import { confirmDisposeJobs } from '@/components/apply/confirmDisposeJobs'
 import { useDirectionStore } from '@/stores/directionStore'
 
@@ -106,17 +106,23 @@ function toChatMessages(msgs: BackendMessage[]): ChatMessage[] {
 }
 
 /** 后端 /documents/versions 里的一版。 */
-/** 排版自由度五参数（2026-09-02 grill）：scale 字号倍率 / lineHeight 行距倍率 / spacing 段距倍率 /
-    letterSpacing 字间距 px / gutter 栏距 px（左右两栏缝隙）。 */
+/** 排版自由度五参数（2026-09-02 grill）：scale 字号倍率 / line_height 行距倍率 / spacing 段距倍率 /
+    letter_spacing 字间距 px / gutter 栏距 px（左右两栏缝隙）。
+ *
+ * ⚠️ **键名按后端 `app/schemas/resume.py::Typography` 原样写（蛇形）**，不做驼峰转换——
+ * 本仓无 snake↔camel 转换层，`created_at`/`original_name`/`resume_json` 等入前端时同样原样
+ * 保留后端键名。2026-09-24 修：`lineHeight`/`letterSpacing` 曾按驼峰写，而后端吐
+ * `line_height`/`letter_spacing` → 面板里这两项恒 undefined（框空白），且每次改任一参数
+ * 整体写回时把它们抹成 undefined（自动一页更会算出 NaN）——详见 docs/design/resume.md。 */
 export interface Typography {
   scale: number
-  lineHeight: number
+  line_height: number
   spacing: number
-  letterSpacing: number
+  letter_spacing: number
   gutter: number
 }
 /** 默认排版配置（与后端 Typography() 对齐）。 */
-export const DEFAULT_TYPOGRAPHY: Typography = { scale: 1, lineHeight: 1.25, spacing: 1, letterSpacing: 0, gutter: 55 }
+export const DEFAULT_TYPOGRAPHY: Typography = { scale: 1, line_height: 1.25, spacing: 1, letter_spacing: 0, gutter: 55 }
 
 /** 后端 /documents/versions 里的一版。 */
 interface ResumeVersion {
@@ -127,7 +133,7 @@ interface ResumeVersion {
   resume_json?: string
   /** 渲染快照（2026-08-28）：固定模板从 resume_json 渲染的 HTML；上传 v1 为空。 */
   html: string
-  /** 排版自由度配置（2026-09-02 四参数挂版本）：scale/lineHeight/spacing/letterSpacing；上传 v1 为默认。 */
+  /** 排版自由度配置（2026-09-02 四参数挂版本）：scale/line_height/spacing/letter_spacing；上传 v1 为默认。 */
   typography?: Typography
   /** 一句话版本简述（Git 意味，S8 2026-08-14）；旧数据空串。 */
   summary: string
@@ -135,6 +141,22 @@ interface ResumeVersion {
   original_name: string
   original_ext: string
   created_at: string
+}
+
+/** 回滚乐观态的显示源（2026-09-24）：确认回滚后、后端回来前，左栏先按这份切到目标稿。
+ * 字段从回看态（`ReviewState`）与版本列表（`ResumeVersion`）搬运，调用方在 rollbackTo 前置好。 */
+interface RollbackTarget {
+  id: number
+  version: number
+  source: ResumeVersion['source']
+  summary: string
+  markdown: string
+  html: string
+  originalName: string
+  originalExt: string
+  /** 原件 blob URL（pdf/html/txt/md 原生预览；由调用方从回看态**移交**，不 revoke）。 */
+  resumeUrl: string | null
+  resumeExt: string
 }
 
 /** 回看模式状态：某版本当时的文档 + 聊天记录（只读，纯查看不改变状态）。
@@ -205,6 +227,12 @@ interface ResumeState {
   /** 应用建议改写中（「开始改」进行中，S7 统一锁定信号之一，2026-08-14）。
    * 与 generating 并列——apply 期间锁建议操作 + 聊天发送 + 回滚等写动作。 */
   applying: boolean
+  /** 回滚进行中（2026-09-24 乐观回退）：确认回滚后立刻置 true——左栏已乐观切到目标稿 +
+   *  显示「正在回滚…」，但后端还没回到。rollbackTo 的 finally 统一清它（成功/失败都退乐观）。
+   *  它是视觉 + 锁定信号（聊天气泡 + 发送禁用 + 回滚按钮灰掉），**不是**可暂停项（见 selectWorkingStoppable）。 */
+  rollingBack: boolean
+  /** 乐观回退的显示源（2026-09-24）：`rollingBack` 期间左栏渲染它；后端回来后由 loadCurrent 顶掉。 */
+  rollbackTarget: RollbackTarget | null
   /** 待确认的生成预览（agent 生成工具产出暂存预览态，2026-08-12）：非空 = 显示预览 + 「确认保存」。 */
   previewPending: boolean
   /** 确认/带意见重改预览进行中（2026-09-07 统一「出简历」人门）：锁定确认条防重复点。 */
@@ -229,12 +257,6 @@ interface ResumeState {
   applySuggestions: () => Promise<void>
   /** 拉当前暂存生成预览（agent 生成工具产出后显示 + 「确认保存」入口，2026-08-12）。 */
   refreshPreview: () => Promise<void>
-  /** 确认建议（pending/discussing → confirmed，按 id，2026-08-10 去重）。 */
-  acceptSuggestion: (suggestionId: number) => Promise<void>
-  /** 拒绝建议（→ rejected + 记偏好，按 id）。 */
-  rejectSuggestion: (suggestionId: number, reason?: string) => Promise<void>
-  /** 聊一聊（pending → discussing，面板右栏「正在聊」区）。 */
-  startDiscuss: (suggestionId: number) => Promise<void>
   loadVersions: () => Promise<void>
   loadCurrent: () => Promise<void>
   /** 调排版自由度（2026-09-02）：本地即时改 typography（预览注入即时变），防抖 500ms 回后端
@@ -247,7 +269,11 @@ interface ResumeState {
   /** 悬浮卡片里的待执行建议数（回滚前警告用）。 */
   pendingSuggestionCount: number
   loadPendingCount: () => Promise<void>
-  rollbackTo: (documentId: number, includeFacts?: boolean) => Promise<boolean>
+  rollbackTo: (documentId: number) => Promise<boolean>
+  /** 进入回滚乐观态（2026-09-24）：左栏立刻切到 `rollbackTarget` + 显示「正在回滚…」。
+   *  调用方须在 `rollbackTo` **之前**调它——回滚那套后端操作很慢，先切界面再等。
+   *  `rollbackTarget` 由 `openReview` 预先置好（回看 = 乐观态的显示源），本函数只翻标志位。 */
+  beginRollback: () => void
   /** 确认生成预览：decision=confirm 写库 vN（版本变更）；decision=revise 带 feedback 重改
    *  （2026-09-07 统一「出简历」人门），重改出新预览不出版本。返回版本号，revise/失败返回 null。 */
   confirmGeneration: (decision?: 'confirm' | 'revise', feedback?: string) => Promise<number | null>
@@ -269,10 +295,11 @@ interface ResumeState {
  * 关键：**这是视觉信号，不是锁**。锁（`generating` / `applying` 决定能不能发消息/操作）
  * 与它解耦——所以「解析/抽取」能亮气泡却不禁用输入（后台抽取不耽误聊天）。
  */
-export type WorkingKind = 'parsing' | 'extracting' | 'opening' | 'replying' | 'applying'
+export type WorkingKind = 'parsing' | 'extracting' | 'opening' | 'replying' | 'applying' | 'rollingBack'
 
 /** 从既有状态派生当前「正在做什么」（不单独存、不手动同步，避免双真相源）。 */
-export function selectWorkingKind(s: Pick<ResumeState, 'applying' | 'generating' | 'openingPending' | 'extractPhase'>): WorkingKind | null {
+export function selectWorkingKind(s: Pick<ResumeState, 'applying' | 'generating' | 'openingPending' | 'extractPhase' | 'rollingBack'>): WorkingKind | null {
+  if (s.rollingBack) return 'rollingBack'
   if (s.applying) return 'applying'
   if (s.generating) return 'replying'
   if (s.openingPending) return 'opening'
@@ -281,8 +308,10 @@ export function selectWorkingKind(s: Pick<ResumeState, 'applying' | 'generating'
   return null
 }
 
-/** 当前工作是否可暂停（小飞机变暂停按钮）。仅对话回复 + 开场白可取消；解析/应用建议不可。 */
-export function selectWorkingStoppable(s: Pick<ResumeState, 'applying' | 'generating' | 'openingPending' | 'extractPhase'>): boolean {
+/** 当前工作是否可暂停（小飞机变暂停按钮）。仅对话回复 + 开场白可取消；解析/应用建议不可。
+ *  **回滚不可暂停**（2026-09-24 定）：回滚是事务性的，停在「文档已软作废、工作台恢复一半」
+ *  比慢更糟——故 rollingBack 返回 false，气泡只说明「正在回滚…」，不给停止按钮。 */
+export function selectWorkingStoppable(s: Pick<ResumeState, 'applying' | 'generating' | 'openingPending' | 'extractPhase' | 'rollingBack'>): boolean {
   const k = selectWorkingKind(s)
   return k === 'replying' || k === 'opening'
 }
@@ -499,6 +528,8 @@ export const useResumeStore = create<ResumeState>((set, get) => ({
   generating: false,
   openingPending: false,
   applying: false,
+  rollingBack: false,
+  rollbackTarget: null,
   /** 确认/带意见重改生成预览进行中（2026-09-07 统一「出简历」人门）：锁定确认条防重复点。 */
   confirming: false,
   previewPending: false,
@@ -754,35 +785,6 @@ export const useResumeStore = create<ResumeState>((set, get) => ({
     }
   },
 
-  /** 接受一条建议：pending/discussing → confirmed（右栏已确认）。按 id（2026-08-10 去重）。 */
-  acceptSuggestion: async (suggestionId: number) => {
-    try {
-      await api.post('/v1/optimization/accept', { suggestion_id: suggestionId })
-    } catch (err) {
-      // 接受失败：不静默——否则建议收了还是没收用户不知道
-      set((prev) => ({ messages: pushError(prev, `确认建议失败：${userErrorText(err)}`) }))
-    }
-  },
-
-  /** 拒绝一条建议：pending/discussing → rejected + 记偏好（同类不再建议）。按 id。 */
-  rejectSuggestion: async (suggestionId: number, reason = '') => {
-    try {
-      await api.post('/v1/optimization/reject', { suggestion_id: suggestionId, reason })
-    } catch (err) {
-      // 拒绝失败：不静默（但这是轻量动作，提示即可）
-      set((prev) => ({ messages: pushError(prev, `记录拒绝失败：${userErrorText(err)}`) }))
-    }
-  },
-
-  /** 聊一聊：pending → discussing（面板右栏「正在聊」区）。用户在聊天框提问，agent 针对性讨论。 */
-  startDiscuss: async (suggestionId: number) => {
-    try {
-      await api.post('/v1/optimization/discuss', { suggestion_id: suggestionId })
-    } catch (err) {
-      set((prev) => ({ messages: pushError(prev, `进入聊一聊失败：${userErrorText(err)}`) }))
-    }
-  },
-
   /** 挂载恢复 + 版本变更后切新轮：拉**当前 session**（id 最大）的消息。
    *
    * 2026-08-10 决策修订（§11.1「干净轮回 + 历史归档」）：不再聚合全部 session 历史
@@ -916,7 +918,12 @@ export const useResumeStore = create<ResumeState>((set, get) => ({
   loadVersions: async () => {
     try {
       const { data } = await api.get<{ versions: ResumeVersion[] }>('/v1/documents/versions')
-      set({ versions: data.versions, versionsLoaded: true })
+      const { rollingBack, rollbackTarget } = get()
+      // 乐观回滚中：后端还没软作废，列表仍含「会被作废的高于目标稿的稿」。先按目标稿收窄，
+      // 免得版本面板/「第 N 稿」标签在回滚期间显示尚未生效的状态（后端回来后由真数据接管）。
+      const versions =
+        rollingBack && rollbackTarget ? data.versions.filter((v) => v.version <= rollbackTarget.version) : data.versions
+      set({ versions, versionsLoaded: true })
     } catch (err) {
       // 加载失败：出声（否则版本列表静默消失，回滚无处下手）
       set({ versionsLoaded: true })
@@ -928,16 +935,22 @@ export const useResumeStore = create<ResumeState>((set, get) => ({
     }
   },
 
-  /** 拉悬浮卡片待执行建议数（回滚前警告「会清空 N 条」用）。 */
+  /** 拉未定论的优化点数（回滚前警告「会清空 N 条」用）。
+   *
+   * 2026-09-23：改读 change_records。口径 = **子项**且对齐后端 `count_open_records`——
+   * 「有 pending/discussing 子项的记录数」。无子项的记录（原因先行的空壳）不算。
+   */
   loadPendingCount: async () => {
     try {
-      // 2026-08-10：pending 接口返回三栏（待定/已确认/正在聊）；回滚警告用「未定论」总数
-      const { data } = await api.get<{ pending: unknown[]; confirmed: unknown[]; discussing: unknown[] }>('/v1/optimization/pending')
-      set({ pendingSuggestionCount: data.pending.length + data.discussing.length })
+      const { data } = await api.get<{ records: ChangeRecord[] }>('/v1/optimization/records')
+      const open = data.records.filter((r) =>
+        r.changes.some((c) => c.status === 'pending' || c.status === 'discussing'),
+      )
+      set({ pendingSuggestionCount: open.length })
     } catch (err) {
       // 后端暂不可达：出声（否则卡片悄悄清零，用户以为待执行建议没了）
       notifications.show({
-        title: '加载待执行建议数失败',
+        title: '加载待执行优化点数失败',
         message: userErrorText(err),
         color: 'red',
       })
@@ -1072,38 +1085,80 @@ export const useResumeStore = create<ResumeState>((set, get) => ({
     }, 500)
   },
 
-  /** 回滚到某文档（按 document_id 身份锚定，2026-08-12 A3）；includeFacts=True 时连事实快照一起还原。返回是否成功。
+  /** 进入回滚乐观态（2026-09-24）：左栏立刻切到 rollbackTarget + 显示「正在回滚…」。
+   *  rollbackTarget 由 openReview 预先置好（回看 = 乐观态的显示源），这里只翻标志位。 */
+  beginRollback: () => {
+    set({ rollingBack: true })
+  },
+
+  /** 回滚到某文档（按 document_id 身份锚定，2026-08-12 A3）。返回是否成功。
    *
    * 2026-08-10 软作废回滚：目标稿之后全标 superseded（数据保留 UI 不显示），目标稿变当前。
+   * 2026-09-24：回滚 = **整份恢复该版开始时的工作台**（资料集 + 改动记录），无 includeFacts
+   * 开关——「只回文档不回工作台」会留下锚在旧内容上的待办，是半吊子状态，已废。
    * 版本变更 = 干净轮回：后端已开新 session + 写入「已回滚」事件（§11.3），loadChatHistory 切回新 session。
+   *
+   * **乐观回退（2026-09-24）**：回滚后端要走「软作废 + 工作台整份恢复 + 开新 session」一整套，
+   * 期间左栏若停在旧稿就是「点了没反应」。故调用方在**调本函数前**先 `beginRollback()`（标志位
+   * 一翻，左栏就按 rollbackTarget 渲染目标稿）。本函数负责按后端真身校准，**无论成功失败都清乐观态**
+   * （finally）——否则中途出错会把左栏永久卡在「正在回滚…」（那是比慢更糟的死态）。
+   * 无需世代号：回滚期间按钮已被锁（rollingBack 进 busy），不存在并发第二轮。
    */
-  rollbackTo: async (documentId, includeFacts = false) => {
-    // 主闸门：对话还没收到回复 / 正在应用建议改写时不许跳版本——否则旧 session 的回复
-    // 会串到回退后的新版本，或 apply 改写与新版本互相踩踏。先等 agent 说完再回滚
-    // （若被别的方式冲破，下方世代号兜底作废在途旧回复）。
-    if (get().generating || get().applying) {
-      notifications.show({
-        title: '正在处理',
-        message: get().applying ? '正在应用建议改写简历，等它完成再回滚。' : 'agent 还在回复上一句，等它说完再回滚。',
-        color: 'yellow',
-      })
-      return false
-    }
+  rollbackTo: async (documentId) => {
     try {
-      await api.post<{ version: number; facts_restored: boolean }>('/v1/documents/rollback', {
+      // 主闸门：对话还没收到回复 / 正在应用建议改写时不许跳版本——否则旧 session 的回复
+      // 会串到回退后的新版本，或 apply 改写与新版本互相踩踏。先等 agent 说完再回滚。
+      if (get().generating || get().applying) {
+        notifications.show({
+          title: '正在处理',
+          message: get().applying ? '正在应用建议改写简历，等它完成再回滚。' : 'agent 还在回复上一句，等它说完再回滚。',
+          color: 'yellow',
+        })
+        return false
+      }
+      const { data } = await api.post<{ version: number; workspace_restored: boolean }>('/v1/documents/rollback', {
         document_id: documentId,
-        include_facts: includeFacts,
       })
-      // 回滚后当前文档 = 目标稿；刷新版本列表 + 重载当前文档（原件/预览随稿切换）
+      // 已开新 session（后端也开了）——作废在途聊天回复，防旧 session 的回复串进新轮。
+      // 用世代号而非 stopGenerating：不调 /chat/stop（那会把回滚后新 session 的引导也掐了）。
+      chatGeneration += 1
+      if (data.workspace_restored) {
+        // 工作台被换回目标版开始的样子——明确告知，免得用户以为东西「凭空少了」。
+        notifications.show({
+          title: '已回滚',
+          message: '简历与工作台（资料集 + 改动记录）都回到了这一版开始时的样子。',
+          color: 'green',
+        })
+      }
+      // 回滚后当前文档 = 目标稿；刷新版本列表 + 重载当前文档（原件/预览随稿切换）。
+      // loadVersions 此刻 rollingBack 仍为 true → 顺带按目标稿收窄版本列表（见该函数）。
       await useResumeStore.getState().loadVersions()
       await useResumeStore.getState().loadCurrent()
       // 版本变更 = 干净轮回：切到新 session（后端已开新 session + 写入回滚事件）
       await useResumeStore.getState().loadChatHistory()
+      // 开场引导已在后端**后台**生成（schedule_opening，不再拖住回滚响应）→ 短轮询把它捞回来，
+      // 否则引导晚到、聊天框不显示（对齐确认入库 confirmExtract 的做法）。
+      pollForGuide()
       emit('resume-data-changed')
       return true
     } catch (err) {
+      // 失败：后端没变（乐观态要撤回）→ 先清乐观态，再重载真身。
+      // ⚠️ **必须先清**：rollbackTarget 还在时 loadVersions 会按目标稿收窄——失败时那个收窄是错的
+      // （v3 根本没被作废），残留成「v3 从版本面板消失」的幽灵（2026-09-24 自查修）。
+      set({ rollingBack: false, rollbackTarget: null })
+      try {
+        await useResumeStore.getState().loadVersions()
+        await useResumeStore.getState().loadCurrent()
+      } catch {
+        // 拉真身又失败：网络多半断了——乐观态已清（上面），loadCurrent 自会出声。
+      }
       set((s) => ({ messages: pushError(s, `回滚失败：${userErrorText(err)}`) }))
       return false
+    } finally {
+      // 成功路径的乐观源到此才清：loadVersions/loadCurrent 上面已跑完（loadVersions 那次
+      // 在 rollingBack 仍 true 时收窄是对的——此刻目标稿确实即将成为当前）。失败路径已在
+      // catch 里清过，这里幂等。
+      set({ rollingBack: false, rollbackTarget: null })
     }
   },
 
@@ -1208,19 +1263,35 @@ export const useResumeStore = create<ResumeState>((set, get) => ({
         }
         merged.push(...toChatMessages(msgs.data.messages))
       }
+      const reviewState = {
+        id: v.id,
+        version,
+        source: v.source,
+        summary: v.summary ?? '',
+        markdown: v.markdown,
+        html: v.html ?? '',
+        originalName: v.original_name,
+        originalExt: v.original_ext,
+        resumeUrl,
+        resumeExt,
+        messages: merged,
+      }
+      // 回看 = 回滚乐观态的**显示源**（2026-09-24）：把同一份内容同时放进 rollbackTarget，
+      // 回滚时才不用为「目标稿长什么样」再打一轮请求。blob URL 同一引用，退出回看时**不 revoke**
+      // （移交给 rollbackTarget 持有，见 closeReview）。
       set({
-        review: {
-          id: v.id,
-          version,
-          source: v.source,
-          summary: v.summary ?? '',
-          markdown: v.markdown,
-          html: v.html ?? '',
-          originalName: v.original_name,
-          originalExt: v.original_ext,
-          resumeUrl,
-          resumeExt,
-          messages: merged,
+        review: reviewState,
+        rollbackTarget: {
+          id: reviewState.id,
+          version: reviewState.version,
+          source: reviewState.source,
+          summary: reviewState.summary,
+          markdown: reviewState.markdown,
+          html: reviewState.html,
+          originalName: reviewState.originalName,
+          originalExt: reviewState.originalExt,
+          resumeUrl: reviewState.resumeUrl,
+          resumeExt: reviewState.resumeExt,
         },
       })
     } catch (err) {
@@ -1229,10 +1300,18 @@ export const useResumeStore = create<ResumeState>((set, get) => ({
     }
   },
 
-  /** 退出回看模式：回到当前版本状态（纯 UI，不改后端）。 */
+  /** 退出回看模式：回到当前版本状态（纯 UI，不改后端）。
+   *
+   *  2026-09-24：回看是回滚乐观态的显示源，blob URL 与 rollbackTarget **同一引用**。
+   *  若此刻正在回滚（rollingBack），该 URL 仍被 rollbackTarget 引用着 → **不 revoke**，
+   *  否则左栏「正在回滚」期间的原件预览会因 URL 失效变空白。回滚结束（成功/失败）时由
+   *  `loadCurrent` 重新拉原件 + 顶掉 rollbackTarget，那时旧 URL 才真正没人用（这里不主动收，
+   *  跟随对象生命周期即可——本地单用户、一稿一个 blob，量级可忽略）。
+   */
   closeReview: () => {
     const prev = get().review?.resumeUrl
-    if (prev) URL.revokeObjectURL(prev)
+    const heldByRollback = get().rollingBack && get().rollbackTarget?.resumeUrl === prev
+    if (prev && !heldByRollback) URL.revokeObjectURL(prev)
     set({ review: null })
   },
 }))

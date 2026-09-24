@@ -27,7 +27,7 @@ from app.repositories.facts import create_facts, delete_all_facts, list_facts, u
 from app.repositories.crawl_state import clear_all_crawl_state
 from app.repositories.analysis import clear_all_reports
 from app.repositories.jobs import clear_all_followup_events, clear_all_interviews, clear_all_jobs, epoch_write_guard
-from app.repositories.optimization import clear_all_preferences, clear_pending
+from app.repositories.optimization import clear_all_change_records, clear_all_preferences
 from app.repositories.settings import bump_data_epoch
 from app.schemas.documents import ResumeDocument, ResumeUploadResponse
 from app.schemas.facts import FactCreate, FactSource, FactUpdate
@@ -36,7 +36,7 @@ from app.schemas.settings import AppSettingsPatch
 from app.schemas.snapshots import SnapshotRecord
 from app.services import extract_state
 from app.services import settings as settings_service
-from app.services.opening import persist_opening
+from app.services.opening import schedule_opening
 from app.services.sessions import open_session, record_current_event
 from app.utils.render import render_resume
 
@@ -79,34 +79,31 @@ def _fact_source(value: str) -> FactSource:
     return value if value in _FACT_SOURCES else "resume_upload"  # type: ignore[return-value]
 
 
-async def _snapshot_before_replace() -> None:
-    """建新版本前：若已有当前文档，给「将被替换的当前文档」打一份事实快照（按 document_id）。
-
-    无当前文档（首个上传）不打——v1 没有前任，快照在 v2 创建时才打。
-    """
-    current = await docs_repo.latest_document()
-    if current is not None:
-        await snaps_repo.create_snapshot(document_id=current.id)
-
-
 async def save_document(markdown: str, source: str = "generated", html: str = "", summary: str = "", resume_json: str = "", typography: Typography | None = None) -> ResumeDocument:
-    """存一版文档（LLM 组合产出），建新版本前给当前版本打快照。返回新文档。
+    """存一版文档（LLM 组合产出），并给新稿打一份「版本开始时」工作台快照。
 
+    2026-09-24 语义改判：快照 = **该版开始时的工作台**，打点从「建下一版前给旧版打」
+    挪到**版本创建时刻**——本函数顺带打一份。`generate_confirm` 在结清改动记录后会
+    **重打一次覆盖它**（快照要含刚刚那批确认/结清，见该函数）——`create_snapshot` 按
+    document_id 幂等，重打即覆盖，故两条路都不会留下错的那份。
     生成/修改版无原件：original_name/ext 传空（原件只在上传版上有）。
     markdown：上传 v1 内容层（生成版空）。resume_json：生成版结构化真身（上传 v1 空）。
     html：生成版渲染快照（固定模板从 resume_json 渲染）。summary：一句话版本简述（S8）。
     typography：排版自由度配置（2026-09-02 挂版本）：调用方传当前版配置（新生成稿继承上一版）。
     """
-    await _snapshot_before_replace()
     doc = await docs_repo.create_document(markdown=markdown, source=source, html=html, summary=summary, resume_json=resume_json, typography=typography)
+    assert doc.id is not None
+    await snaps_repo.create_snapshot(document_id=doc.id)
     return doc
 
 
 async def save_upload(markdown: str, resume_name: str, original_bytes: bytes | None = None, original_name: str | None = None) -> ResumeUploadResponse:
-    """上传转出：存文档 v1（upload 来源，**不打快照**），原件落盘。
+    """上传转出：存文档 v1（upload 来源），原件落盘，**给 v1 打一份工作台快照**。
 
-    v1 无前任，快照在 v2 创建时才打。原件 = 上传的原始文件（PDF/HTML 等），
-    落盘到 originals/ 供重启后原生预览（文件名消毒防路径穿越）。
+    2026-09-24：快照语义改为「该版开始时的工作台」，打点跟着挪到**创建时刻**——v1 在这
+    打完（此时工作台是空的：还没抽取、也没聊过，正合「v1 刚建立」）。回滚到 v1 被关掉
+    （见 `rollback`），这份快照是留给「后续版本按版开始打」这条链的起点。
+    原件 = 上传的原始文件（PDF/HTML 等），落盘到 originals/ 供重启后原生预览（文件名消毒防路径穿越）。
     不传 original_bytes/original_name（老测试/无原件场景）→ 不落盘、元数据留空。
     summary：上传 v1 固定「最初版本」（无 LLM 时机，规则名，S8）。
     """
@@ -126,6 +123,8 @@ async def save_upload(markdown: str, resume_name: str, original_bytes: bytes | N
     if sanitized:
         assert original_bytes is not None  # 有 sanitized 说明传了原件（上方 guard）
         originals_repo.save_original(doc.version, original_bytes, sanitized)
+    assert doc.id is not None
+    await snaps_repo.create_snapshot(document_id=doc.id)  # v1 开始时的工作台（空）
     return ResumeUploadResponse(
         document_id=doc.id,
         version=doc.version,
@@ -223,7 +222,7 @@ async def reset_resume(clear_facts: bool) -> dict[str, int]:
         docs = await docs_repo.delete_all_documents()
         snaps = await snaps_repo.delete_all_snapshots()
         facts = await delete_all_facts() if clear_facts else 0
-        pending = await clear_pending()
+        records = await clear_all_change_records()
         # 2026-08-29：换简历/重传（reset_resume）**不删 session**——重传是「首次上传失败」的
         # 弥补动作，仍在「首次上传」范畴内，之前的聊天要接着聊（推翻 S1-6「重置连会话一起清」）。
         # 换简历后 current_session 仍是旧的（id 最大），新简历的「已上传/确认」事件接着写进它，
@@ -239,11 +238,11 @@ async def reset_resume(clear_facts: bool) -> dict[str, int]:
             documents=docs,
             snapshots=snaps,
             facts=facts,
-            pending=pending,
+            records=records,
             sessions=sessions,
             originals=originals_deleted,
         )
-        return {"documents": docs, "snapshots": snaps, "facts": facts, "pending": pending, "sessions": sessions}
+        return {"documents": docs, "snapshots": snaps, "facts": facts, "records": records, "sessions": sessions}
 
 
 async def reset_all() -> dict[str, int]:
@@ -276,7 +275,7 @@ async def reset_all() -> dict[str, int]:
         # 2. 删全部业务数据（先反馈后岗位，免留孤儿行）
         docs = await docs_repo.delete_all_documents()
         snaps = await snaps_repo.delete_all_snapshots()
-        pending = await clear_pending()
+        records = await clear_all_change_records()
         preferences = await clear_all_preferences()
         followup_events = await clear_all_followup_events()
         interviews = await clear_all_interviews()
@@ -295,7 +294,7 @@ async def reset_all() -> dict[str, int]:
             documents=docs,
             snapshots=snaps,
             facts=facts,
-            pending=pending,
+            records=records,
             preferences=preferences,
             followup_events=followup_events,
             interviews=interviews,
@@ -309,7 +308,7 @@ async def reset_all() -> dict[str, int]:
             "documents": docs,
             "snapshots": snaps,
             "facts": facts,
-            "pending": pending,
+            "records": records,
             "preferences": preferences,
             "followup_events": followup_events,
             "interviews": interviews,
@@ -319,62 +318,135 @@ async def reset_all() -> dict[str, int]:
         }
 
 
-async def rollback(document_id: int, include_facts: bool) -> tuple[ResumeDocument, bool]:
+async def create_version_snapshot(document_id: int) -> None:
+    """给某版打一份工作台快照（该版**开始时**的工作台：资料集 + 改动记录）。
+
+    调用点 = **版本创建时刻**：`save_upload`（v1）、`generate_confirm`（落库后、结清前，
+    那张快照要含本版之后的确认/结清状态，故不能在 save_document 里打）。
+    回滚的目标版快照早已在它创建时打好，回滚时不重打（重打会存成"回滚后的样子"）。
+    """
+    await snaps_repo.create_snapshot(document_id=document_id)
+
+
+async def _restore_workspace(snapshot: SnapshotRecord) -> bool:
+    """把工作台恢复成快照里的样子（资料集 + 改动记录，**直回不叠加**）。
+
+    语义（2026-09-24）：回滚到 vN = 恢复 vN 开始时的工作台——不是「撤销 vN 之后的变化」，
+    而是直接换成快照那一份（facts 全标 superseded 后按快照重建；records 整表清掉后按快照重建）。
+    旧快照（`records` 为 None，升级前打的）**降级**为只还原事实、不动改动记录——不能拿
+    None 去清空当前记录。返回是否真的做了恢复。
+    """
+    await _restore_facts(snapshot)
+    if snapshot.records is None:
+        logger.info("workspace_restore_legacy_snapshot", document_id=snapshot.document_id)
+        return True
+    await snaps_repo.restore_records(snapshot.records)
+    return True
+
+
+async def _render_discarded_work(snapshot: SnapshotRecord | None) -> str:
+    """渲染「这次回滚真正会放弃的工作」（恢复**之前**算，恢复后就查不到了）。
+
+    **只报会消失的**：当前活跃、但目标版快照里没有的改动记录——它们是在目标版之后新攒的，
+    回滚后不再出现在面板。目标版快照里**有**的那些不算放弃（它们会被原样恢复回来，
+    哪怕此刻状态不同）。快照缺失 / 旧快照（records 为 None）→ 无从对比，返回空串。
+    """
+    from app.services.optimization import pending_records
+
+    if snapshot is None or snapshot.records is None:
+        return ""
+    snap_ids = {c.id for c in snapshot.records}
+    lost = [r for r in await pending_records() if r.id not in snap_ids]
+    if not lost:
+        return ""
+    lines: list[str] = []
+    for r in lost:
+        detail = "；".join(f"{c.target or '（未定位）'}（{c.status}）" for c in r.changes) or "（无具体改动点）"
+        lines.append(f"- {r.reason}：{detail}")
+    return "\n".join(lines)
+
+
+async def rollback(document_id: int) -> tuple[ResumeDocument, bool]:
     """回滚到目标稿（2026-08-10 软作废回滚；2026-08-12 A3 按 document_id 身份锚定）。
 
     - 文档：目标稿之后（id 更大）所有稿标 superseded（数据保留、UI 不显示），目标稿变当前。
       按 **id** 取目标 + 圈定范围——version 可复用（同号一作废一当前两条），按 version 会撞错稿。
-    - 事实：include_facts=True 时，用目标稿那代的快照覆盖当前 active 事实。
-    - 卡片（§12.3 决策四）：版本变更时待执行建议**必须结清**。
+    - **工作台：整份恢复目标版的开始快照**（2026-09-24 改判）——资料集与改动记录一起回到
+      「该版刚建立」那一刻，**直回不叠加**（不是把 vN 之后的变化「撤销」成某中间态，
+      而是直接换成快照里的那份）。回滚的语义从"丢弃 vN 之后的改动"变成"回到 vN 刚开始"。
+    - **回滚到 v1 被拒**：v1 的快照是空的，恢复等于清空工作台——那是「重置」不是「回滚」，
+      让用户去走重置入口（避免一个按钮悄悄抹掉资料集）。
     - 版本变更 = 开新 session（§11.1）。
-    - 返回 (目标稿文档, 是否连事实还原)。
-    - 回滚前先给「被替换的当前稿」打快照——否则回滚后原当前稿的事实状态丢失。
-    - 文档任务互斥（2026-08-14）：回滚写文档流 + 结清建议，撞 apply/改写/生成 409。
+    - **开场引导挪后台（2026-09-24）**：回滚此前同步 `await persist_opening(...)`，被一次
+      LLM 往返（说清「从哪退到哪 + 放弃了哪些变化」）拖住整个响应——用户点确认后要等它
+      回来才看到回退，观感是「点了没反应」。现改为：**持锁期间**把新 session 的 id 钉死，
+      **锁外** fire-and-forget 生成（对齐确认入库 resume.py 的做法），响应提前返回。
+      引导晚到由前端短轮询捞回；回滚**本身**（文档/工作台/session/事件）照旧全程原子，
+      没有任何一段可被暂停。
+    - 返回 (目标稿文档, 是否做了工作台恢复)。
+    - 文档任务互斥（2026-08-14）：回滚写文档流，撞 apply/改写/生成 409。
     """
+    # 后台开场引导的「调度时刻」快照：持锁期间填，锁外发起（见函数末）。钉住 session_id
+    # 而非锁外再取 current_session()——锁外期间别的动作可能又开了新 session，取到会落错轮。
+    opening_session_id: int | None = None
+    covered_id = 0
+    from_version = 0
+    to_version = 0
+    discarded = ""
     async with document_task():
         # 回滚目标 = 当前文档时拒绝（回滚到当下无意义）
         current = await docs_repo.latest_document()
         if current is not None and current.id == document_id:
             raise ConflictError(f"已是当前版本 v{current.version}，无需回滚")
-        # 回滚前给被替换的当前稿打快照（保留"回滚前的事实状态"）
-        await _snapshot_before_replace()
+
+        target = await docs_repo.get_document_by_id(document_id)
+        if target is not None and target.version == 1:
+            raise ConflictError("回滚到最早一版等于清空重建——请用「回到初始版本」重置，而不是回滚")
+
+        # 目标版的开始快照：既用于恢复，也用于算「真正会放弃哪些」（恢复后就查不到了）。
+        snapshot = await snaps_repo.get_snapshot(document_id)
+        # ⚠️ 放弃清单必须在**恢复之前**算：恢复会按快照重建改动记录，恢复后这批就没了。
+        discarded = await _render_discarded_work(snapshot)
 
         doc = await _rollback_document(document_id)
         # 回滚成功必有目标文档 → 被覆盖稿（回滚前的当前稿）也必存在（否则目标稿就是当前稿，上面已拒绝）
         assert current is not None
-        facts_restored = False
-        if include_facts:
-            snapshot = await snaps_repo.get_snapshot(document_id)
-            if snapshot is not None:
-                await _restore_facts(snapshot)
-                facts_restored = True
-        # 版本变更统一结清（§12.3 决策四修订，2026-08-12）：保留 discussing（聊一聊留到
-        # 下一版本继续聊）；清空 pending/confirmed/rejected，清 rejected 时延迟记最终偏好。
-        # 2026-08-21：回滚是被覆盖稿 → 目标稿，结清记到**被覆盖稿 current.id**（这些改动
-        # 是 current 那轮产生的，随回滚作废）；discard=True 让 confirmed 也标 archived——
-        # 这批改动没应用进目标稿（目标稿是旧上传稿），标 applied 会谎称「目标稿应用了它们」。
-        # 惰性 import（函数内）：optimization service 反向依赖本模块的 document_is_busy，
-        # 顶层 import 会成环。结清逻辑与该函数是同一份（含 discard 开关），不再本地复制。
-        from app.services.optimization import clear_settled_for_new_version
-
-        counts = await clear_settled_for_new_version(current.id, discard=True)
-        if any(counts.values()):
-            logger.info("pending_suggestions_cleared_on_rollback", cleared=counts)
+        # 工作台恢复：用目标版的开始快照，资料集 + 改动记录整份换回。
+        # ⚠️ 旧快照（records_json 为 NULL，升级前打的）在 _restore_workspace 里降级为
+        # 「只还原事实、不动改动记录」——不能拿 None 去清空当前记录。
+        workspace_restored = await _restore_workspace(snapshot) if snapshot is not None else False
         # 版本变更 = 开新 session（§11.1），绑定目标稿 id
-        await open_session(document_id=doc.id)
+        sess = await open_session(document_id=doc.id)
+        opening_session_id = sess.id  # 钉死在本轮 session，锁外发引导用（不落错轮）
         # 事件落库到**新 session**：回滚是干净轮回，事件是新一轮的第一条（§11.3）。
-        # ref_document_id = 被覆盖稿 current.id——回滚引导据此精确说「上一版改了什么」
-        # （连续回滚时「id 最大 superseded」取错，所以精确记录而非事后反推）。
+        # 从哪退到哪要写清（用户诉求：回滚后要能看出动过什么）。
         await record_current_event(
-            f"已回滚到第 {doc.version} 稿{'，并连事实一起还原' if include_facts else ''}（后续稿已作废，下一稿从第 {doc.version + 1} 稿继续）",
+            f"已从第 {current.version} 稿回滚到第 {doc.version} 稿（第 {doc.version} 稿之后的各稿已作废，下一稿从第 {doc.version + 1} 稿继续）",
             kind="rolled_back",
             ref_document_id=current.id,
         )
-        # 分阶段引导（§11.8）：回滚是干净轮回，引导落库为新 session 的第一条助手消息。
-        # covered_document_id = 被覆盖稿 current.id——精确说「上一版改了什么」，不事后反推。
-        await persist_opening("rolled_back", covered_document_id=current.id)
-        logger.info("resume_rolled_back", to_document_id=document_id, current_version=doc.version, facts_restored=facts_restored)
-        return doc, facts_restored
+        # 分阶段引导（§11.8）：仅**收集**生成所需参数——真正的生成/落库在**锁外**发起
+        # （见函数末 schedule_opening）。from_version/to_version 供 prompt 说清「从哪退到哪」；
+        # discarded = 刚被放弃的工作（恢复前就捞好，恢复后查不到）；covered_document_id
+        # 保留被覆盖稿的溯源线索。
+        covered_id = current.id
+        from_version = current.version
+        to_version = doc.version
+        logger.info("resume_rolled_back", to_document_id=document_id, current_version=doc.version, workspace_restored=workspace_restored)
+    # 锁已释放：回滚本身（文档/工作台/session/事件）全部落定，开场引导才在后台起跑。
+    # session_id=None（真无 session，理论上不会）→ 不调度，只记日志。
+    if opening_session_id is None:
+        logger.warning("rollback_opening_no_session", document_id=document_id)
+    else:
+        schedule_opening(
+            "rolled_back",
+            covered_document_id=covered_id,
+            session_id=opening_session_id,
+            from_version=from_version,
+            to_version=to_version,
+            discarded=discarded,
+        )
+    return doc, workspace_restored
 
 
 async def _rollback_document(document_id: int) -> ResumeDocument:

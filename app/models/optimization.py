@@ -1,9 +1,11 @@
-"""数据表模型：优化建议（1.2）。
+"""数据表模型：优化点（1.2）。
 
-- `preferences`：用户判定偏好——拒绝项 + 自定义标准（见 docs/design/resume.md §5、§12.5）。
-  独立于事实库；优化建议被拒 = 记"拒掉这一类"（如 reject_quantify），同类不再建议。
-- `optimization_pending`：悬浮改进卡片的落库——被接受的建议攒批，重启不丢（§12.3）。
-  版本变更（生成/回滚/应用）时卡片必须结清（应用并清空），不会跨版本脱锚。
+- `change_records`：**唯一活表**（2026-09-23 起）——优化点 = 改动记录，`reason`（为什么）
+  + `changes`（改什么，复合子项，各自带 status）。聊天 agent、投递页处方、面板都读写它。
+- `optimization_pending`：**停用，待 DROP**——旧建议流（逐条一行）的落库表。行留存不删，
+  仅供「这版改了什么」溯源回查；新代码不得再写。
+- `preferences`：**停用，待 DROP**——旧「拒掉这一类」偏好（含 kind=custom 自定义标准）。
+  随优化点合并进 change_records 而废弃（见 docs/design/resume.md §5、§12.5）。
 """
 
 from datetime import UTC, datetime
@@ -11,8 +13,38 @@ from datetime import UTC, datetime
 from sqlmodel import Field, SQLModel
 
 
+class ChangeRecord(SQLModel, table=True):
+    """一条「改动记录」：原因（why）+ 改动点（what，复合子项）。
+
+    2026-09-23 起取代 optimization_pending + preferences(kind=custom)——优化点与
+    用户决策记录合一为一张表（照 UserFact 的 title + points 复合形状）。
+
+    - reason：改动原因（为什么），记录主体，一行一份、不重复（同原因的新改动 append 子项）。
+    - changes：改动点（改什么），JSON 字符串列，子项
+      `{id, target, original, suggested, status, type, severity}`；
+      **可空数组**（原因先行、子项后补）。子项 **id 在记录内唯一**、**自带 status**——操作粒度 = 单条子项。
+      `type`/`severity` 供面板展示（改哪类、多要紧）。
+    - status：记录级兜底状态（子项全空时的粗状态、整条存废）。
+    - kind：`change`（本轮整改，用完即丢）/ `decision`（跨版本持续生效的决策记录）。
+    """
+
+    __tablename__ = "change_records"
+
+    id: int | None = Field(default=None, primary_key=True)
+    reason: str = Field(default="")  # 改动原因（为什么）——记录主体
+    changes: str = Field(default="[]")  # 改动点 JSON 列：[{id,target,original,suggested,status,type,severity}]
+    status: str = Field(default="pending", index=True)  # 记录级兜底/存废：pending/discussing/.../archived
+    kind: str = Field(default="change", index=True)  # change（本轮整改）/ decision（持续决策记录）
+    origin: str = Field(default="agent", index=True)  # agent / job_analysis
+    session_id: int = Field(default=0, index=True)  # 提出会话
+    document_id: int = Field(default=0, index=True)  # 基于哪版
+    resolved_in_document_id: int | None = Field(default=None, index=True)  # 哪版结清；NULL=活跃
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class Preference(SQLModel, table=True):
-    """一条用户判定偏好：拒绝项 / 自定义标准。"""
+    """一条用户判定偏好：拒绝项 / 自定义标准。**停用，待 DROP**（2026-09-23）。"""
 
     __tablename__ = "preferences"
 
@@ -26,6 +58,9 @@ class Preference(SQLModel, table=True):
 
 class OptimizationPending(SQLModel, table=True):
     """一条优化建议（1.2 建议流落库，2026-08-10 从「仅已接受」升级为完整状态机）。
+
+    **2026-09-23 停用，待 DROP**：优化点已统一到 `change_records`（原因 + 改动点复合表）。
+    本表行留存不删，仅供历史溯源；新代码不得再写。旧语义留档如下。
 
     建议从聊天暂存升级为落库对象：suggest_improvements 产出即落库 pending，
     面板三栏（待定/已确认/正在聊）直接读它，聊一聊/裁决更新状态，切页/刷新不丢。

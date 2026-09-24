@@ -19,12 +19,22 @@ from app.schemas.resume import Resume, resume_to_json
 _SUMMARY_TITLES = ("个人概述", "个人简介", "自我介绍", "自我评价")
 
 
-def flatten_facts(facts: list[Fact], *, bullet_title: bool = False, on_resume_only: bool = False) -> str:
+def flatten_facts(
+    facts: list[Fact],
+    *,
+    bullet_title: bool = False,
+    on_resume_only: bool = False,
+    with_id: bool = False,
+) -> str:
     """事实列表 → 注入/校验用文本（按条目行 + 缩进要点行的两层展平）。
 
     各注入点（对话 agent / 方向提炼 / 开场引导 / 生成输入）共用此格式，避免四份拷贝漂移：
     - bullet_title：条目行是否带 `- ` 前缀（对话/开场用带前缀，方向/生成用不带）。
     - on_resume_only：只取 on_resume=True 的事实（生成输入 + 机器门口径，ADR 0011）。
+    - with_id：条目行是否带 `#id` 前缀——**只给对话 agent 的注入用**（2026-09-23）：
+      agent 要调 set_fact_on_resume 把某条事实翻「不显示」时得指得出是哪一条，
+      而资料集里有重名条目（多条「个人概述：…」），按标题匹配会打错人。
+      生成/机器门的注入不带——那是给 LLM 读内容的，多一个数字没用还脏。
     """
     lines: list[str] = []
     for f in facts:
@@ -33,7 +43,8 @@ def flatten_facts(facts: list[Fact], *, bullet_title: bool = False, on_resume_on
         # 2026-09-21：条目行带上时间线（occurred_at）——生成 agent 据此拆 startDate/endDate，
         # 对话 agent 借此感知时长/gap。无日期不拼空括号。
         title = f"{f.title}（{f.occurred_at}）" if f.occurred_at else f.title
-        lines.append((f"- [{f.category}] {title}") if bullet_title else f"[{f.category}] {title}")
+        ref = f"#{f.id} " if with_id and f.id is not None else ""
+        lines.append((f"- {ref}[{f.category}] {title}") if bullet_title else f"{ref}[{f.category}] {title}")
         for p in f.points:
             lines.append(f"  - {p}")
     return "\n".join(lines)
@@ -54,6 +65,14 @@ def find_missing_facts(facts_text: str, resume: Resume) -> list[str]:
 
     检测手段：每条 title 行的非空关键词都必须在 resume JSON 全文出现；概述类例外
     （标题词不进成品，只查 basics.summary 非空）。空清单 = 覆盖完整。
+
+    这是**改写的机器门**，判「有事实没进成品」。注意它的职责边界：它只对比
+    facts_text × 成品，**分不清「用户主动撤下的」和「LLM 漏搬的」**——两种都表现为
+    「facts_text 有、成品没有」。所以「用户要求撤下某条」绝不能靠这里放行，必须让那条
+    事实**从 facts_text 里消失**（`on_resume=False`，由 set_fact_on_resume 落库）——
+    那才是唯一分得清的分界。本判据保持严格：宁可误报，不可漏报。
+
+    on_resume=False 的事实轮不到这里管：`build_facts_text` 已按 on_resume_only 过滤。
     """
     full_text = resume_to_json(resume)
     missing: list[str] = []

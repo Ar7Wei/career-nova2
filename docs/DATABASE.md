@@ -16,10 +16,11 @@
 | `settings` | 全局设置（单行 JSON blob） | 已实现 |
 | `user_facts` | 用户信息事实库（简历模块地基，全局共享） | 已实现 |
 | `resume_documents` | 版本化简历文档（成品，单文档流） | 已实现 |
-| `resume_snapshots` | 事实库整表快照（与文档版本同代，回滚用） | 已实现 |
+| `resume_snapshots` | **工作台快照**（资料集 + 改动记录；与文档版本同代，每版开始时打，回滚整份恢复） | 已实现 |
 | `chat_sessions` / `chat_messages` | 会话存储（每版本一 session，1.2/1.3 共享底座） | 已实现 |
-| `optimization_pending` | 1.2 优化建议落库（状态机 pending/confirmed/rejected/discussing + 终态 applied/archived 软标记全留存，三栏面板读它） | 已实现 |
-| `preferences` | 用户判定偏好（拒绝项 + 自定义标准，含"拒掉这一类"） | 已实现 |
+| `optimization_pending` | **旧**优化建议落库（**停用，待 DROP**）；仅投递页处方「改进」收录时读一条 `proposed` 行 | 停用 |
+| `change_records` | **改动记录**（原因 → 改动点复合）：优化点与用户决策记录合一，2026-09-23 取代简历侧 `optimization_pending` + `preferences(kind=custom)` | 已实现 |
+| `preferences` | 用户判定偏好（**停用，待 DROP**；「拒掉这一类」已改记为 `change_records(kind=decision)`） | 停用 |
 | `jobs` | 岗位聚合（阶段二 v1：源岗位，同源幂等 upsert，跨源不去重） | 已实现 |
 | `job_followup_events` | 投递跟进状态时间线（单一状态线，时间线即真相；取代已作废的 `job_screening`） | 已实现（2026-08-30 定稿） |
 | `interviews` | 面试场次（一个岗位 0..N 场；日历数据源，编年可追溯） | 已实现（2026-08-31 定稿） |
@@ -112,20 +113,23 @@
 - **原件持久化（2026-08-09）**：上传的原件文件（PDF/HTML 等）落盘到 SQLite 同级 `originals/`（文件名 = `v{version}_{消毒后文件名}`，防路径穿越），本表只记 `original_name/original_ext` 元数据。重启后左栏仍可原生预览原件（`GET /documents/original` 取文件 → 前端 blob 重建）。回滚到上传版时原件随稿切回（软作废不产生新稿号，目标稿原件路径不变）。`reset` 时清空 `originals/`。历史库迁移：`init_db` 检测缺列自动 ALTER 补上（默认空 = 无原件）。
 
 ### `resume_snapshots`
-**事实库整表快照**——与文档同代，按 **document_id** 锚定（见 `docs/design/resume.md` §9）。**建新版本前**给「将被替换的当前文档」打一份 `user_facts` 的 active 行快照。
+**工作台整表快照**（资料集 + 改动记录）——与文档同代，按 **document_id** 锚定（见 `docs/design/resume.md` §9）。**每版创建时**给这一版打一份：`user_facts` 的 active 行 + `change_records` 全表。
 
 | 列 | 类型 | 说明 |
 |---|---|---|
 | `id` | INTEGER PK | 自增 |
 | `document_id` | INTEGER（index） | 对应文档 id（唯一身份，2026-08-12 A3 从 `resume_version` 迁来——version 可复用会让同号快照互覆失真，id 永不复用） |
 | `facts_json` | TEXT | user_facts 整表 JSON（active 行；superseded 历史不进快照） |
+| `records_json` | TEXT / NULL | change_records 整表 JSON（**含已结清行**——§11.8 的版本溯源不断）。旧行（升级前）为 NULL → 回滚降级为「只还原事实、不动改动记录」 |
 | `created_at` | DATETIME | 时间戳 |
 
 设计要点：
-- **快照时机（2026-08-06 定稿）**：`save_upload` 不打（v1 无前任）；`save_document`/回滚在**建新版本前**给当前版本打。vN 快照 = "vN 还是当前文档时的事实库"（vN 任期末）——v1 在 v2 创建时才打，天然含上传后台抽取结果。
+- **快照时机（2026-09-24 改判，推翻 2026-08-06 的「任期末」口径）**：**该版创建时**打，记的是「**这一版刚开始时的工作台**」——`save_upload` 给 v1 打；`save_document` 给新稿打一份；`generate_confirm` 在**结清改动记录之后**重打一次覆盖（那张要含刚确认/结清的那批）。回滚到 vN = 恢复到「vN 刚生成」那一刻，任期内聊的、确认的都不在里面。
 - **幂等**：同一版本可重复打，已存在则先删再插——"最新一次打的"为准，取快照无歧义。
-- 回滚文档时若选 `include_facts=true`，用目标版本那代的快照覆盖当前 active 事实（当前全标 superseded、快照重建 active、**嵌套层级随 `title`+`points` 一并还原**——一条一行，无需 id 映射）。回滚自身也先给被替换版本打快照。**快照里每条事实的 `source` 原样还原**（chat/manual 不回退成 resume_upload，2026-08-07 修正）。
-- **快照粒度**：按"每次生成/回滚打一个"；对话中途细粒度回滚已砍（2026-08-31）。
+- **回滚 = 整份恢复**（2026-09-24）：资料集当前 active 全标 superseded 后按快照重建；改动记录**整表清掉**后按快照重建（原 id、子项状态、resolved 痕迹原样回来）。**直回不叠加**——不是"撤销 vN 之后的变化"，而是直接换成快照那一份。**无 `include_facts` 开关**（「只回文档不回工作台」会留下锚在旧内容上的待办）。
+- **回滚到最早一版被拒**：v1 的快照是空的，恢复 = 清空工作台——那是「重置」不是「回滚」。
+- **快照里每条事实的 `source` 原样还原**（chat/manual 不回退成 resume_upload，2026-08-07 修正）。
+- **快照粒度**：按"每版开始时打一个"；对话中途细粒度回滚已砍（2026-08-31）。
 
 ### `chat_sessions` / `chat_messages`
 **会话存储**——每版本一 session（1.2/1.3 共享底座，见 `docs/design/resume.md` §11）。**纯 SQLite 表，不引 checkpoint**。
@@ -157,8 +161,33 @@
 - **错误事件也留痕（2026-09-01 系统气泡）**：`AppError` 全局 handler 收口失败时，顺手把「错误事件」（`kind=error_*`，红色系统气泡）写进当前 session——成功事件与失败事件同一真相源（不再是「成功后端记、失败前端拼」的双源）。瞬时护栏/协作式信号（`EpochChangedError`、并发互斥 409）置 `record_event=False` 不落库。后台抽取失败（不走 AppError handler）在 `extract_facts_async` 显式记 `error_extract`。前端按 `kind` 判定：`error_*`→错误红条 / 其它 event→事件灰条。
 - **服务端持有唯一历史**：`POST /chat {session_id, message}` 增量式——客户端只发新消息，服务端读全量历史 → append → 跑 agent → append 助手回复 → 持久化 → 返回。重启后按 session 拉历史完整还原。
 
-### `optimization_pending`
-**优化建议落库**——建议组从「聊天暂存」升级为「落库对象」，完整状态机（2026-08-10，见 `docs/design/resume.md` §12.3）。`suggest_improvements` 产出即落库 pending；面板三栏（待定/已确认/正在聊）直接读它；聊一聊/裁决更新状态；重启不丢。
+### `change_records`
+**改动记录**（原因 → 改动点复合，2026-09-23）——优化点与用户决策记录**合一**为一张表（照 `user_facts` 的 title+points 形状）。取代简历侧 `optimization_pending` + `preferences`（两张旧表停用，见下）。
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `id` | INTEGER PK | 自增 |
+| `reason` | TEXT | **改动原因（为什么）**——记录主体，一行一份、不重复（同原因 append 子项） |
+| `changes` | TEXT(JSON) | **改动点（改什么）**：`[{id, target, original, suggested, status, type, severity}]`，**可空数组**（原因先行、子项后补）；子项 **id 记录内唯一 + 自带 status**（操作粒度 = 单条子项）；`type`/`severity` 供面板展示改哪类、多要紧 |
+| `status` | TEXT（index） | 记录级兜底状态（子项全空时 / 整条存废）：pending/discussing/.../archived |
+| `kind` | TEXT（index） | `change` 本轮整改（用完即随版本结清）/ `decision` **跨版本持续决策**（每版注入生成/改写 prompt） |
+| `origin` | TEXT（index） | `agent`（聊天 agent 提的）/ `job_analysis`（投递页分析产的处方） |
+| `session_id` | INTEGER（index） | 提出会话 |
+| `document_id` | INTEGER（index） | 基于哪版 |
+| `resolved_in_document_id` | INTEGER（index，可空） | 哪版被结清；NULL=活跃 |
+| `created_at` / `updated_at` | DATETIME | 时间戳 |
+
+设计要点：
+- **原因先行、子项后补**：`reason` 填、`changes=[]` 可先挂待定；聊定后填子项。
+- **同原因不重复**：新改动与已有活跃记录同因 → append 子项，不新开行。
+- **操作粒度 = 单条子项**：逐条 accept/reject/discuss/retract（`update_change_item_status`）。面板四栏按**子项状态**分栏；「开始改」按**子项**判据（有 confirmed 子项即可改，不等整条记录定论）。
+- **结清是子项级软标记**（`soft_settle_change_records`）：版本变更时 `confirmed` 子项 → `applied`、`pending`/`rejected` → `archived`，记录级 `archived` + 记 `resolved_in_document_id`。只剩 discussing 子项的记录**保持活跃**（留到下一版继续聊）。
+- **`applied` 只说「它 resolve 的那一版真应用了它」（2026-09-24）**：结清时按**本版真进了图的**改动点判——`generate_resume` 这条路**不带**已确认改动，它那批 confirmed 标 `archived`（结清未应用）而非 `applied`。旧实现不看带了什么、一律标 applied，新版开场引导（读该版 resolved 记录）就会谎报「这版做了这些调整」。**回滚不再走结清**（回滚 = 恢复快照，见 `resume_snapshots`），`discard` 分支随之删除。
+- **持久决策**：`kind=decision` 的活跃记录经 `build_decisions_text` 注入生成/改写 prompt（跨版本约束）；agent 用 `query_decisions` 查历史、改动前先查避免相悖。
+- **「拒掉这一类」偏好并入本表**：版本变更清掉 `rejected` 子项时，按 `type` 聚合记一条 `kind=decision` 记录（原因形如「拒掉这一类：quantify」）——不再单独写 `preferences` 表。
+
+### `optimization_pending`（**停用，待 DROP**）
+**旧优化建议落库**——建议组从「聊天暂存」升级为「落库对象」，完整状态机（2026-08-10 →）。**2026-09-23 起停用**：优化点统一到 `change_records`（原因 + 改动点复合表），本表**行留存不删**（供历史溯源），新代码不得再写。仅剩的一处读口是投递页处方「改进」收录时读一条 `proposed` 行、收录后把它软结清 `archived`。
 
 | 列 | 类型 | 说明 |
 |---|---|---|
@@ -180,33 +209,41 @@
 | `updated_at` | DATETIME（可空） | 状态最近变更时间（2026-09-14 加）——注入聊天 agent 时 `render_panel` 据它标「← 你刚改的」行 |
 
 设计要点：
-- **状态机**：`suggest_improvements` 产出 → `pending`（面板左栏）；接受 → `confirmed`（右栏）；拒绝 → `rejected`（灰栏，**版本内可撤回**）；聊一聊 → `discussing`（右栏「正在聊」）；`update_suggestion`（原 `decide_suggestion`，2026-08-25 改名 + 开放全状态操作）→ accept→confirmed / reject→rejected / discuss→discussing / retract→pending / refine→内容更新回 pending / split→原条回 pending + 新条 pending（`split_from` 关联）。**撤回**（2026-08-12）：confirmed/discussing/rejected → pending（右三栏每条「撤回」）。
-- **优化点操作权（2026-08-25 §12.6）**：`propose_suggestion` 工具 + 提案单例 + 聊天内提议卡**废除**——建议操作统一走 `update_suggestion` 工具 + 面板；状态守卫放宽到「只要活跃（`resolved_in_document_id IS NULL`）即可操作」，agent 在聊天里听到用户口头表态（"第 2 条接受"）直接改状态，不再要求先点「聊一聊」。
-- **偏好延迟记录（2026-08-12 策略反转）**：拒绝**不即时记**偏好——拒绝可撤回，撤回后不算"这一类"。到**版本变更统一结清**时，按仍留在 rejected 里的最终结果，按 type 聚合记 `preferences`（`kind=reject`，"拒掉这一类"）。
-- **处方（`proposed`，2026-09-14 apply.md §11.7.3）**：投递页分析（`scope=batch`）产的可执行建议，落库即 `proposed` + `origin=job_analysis`——**不进面板四栏**（`list_suggestions` 默认过滤掉），点「改进」走 `POST /optimization/promote` 转 `pending` 才进面板、才被聊天 agent 看见。**只有未处理分析出处方**；已投递/面试分析产的结论是**嘱咐**（随报告，无状态、无处收录，见 `analysis_reports`）。
-- **版本变更统一结清（2026-08-12）**：生成确认 / 应用建议（"开始改"）/ 回滚三种版本变更统一——**保留 discussing**（聊一聊的内容留到下一版本继续聊，是否适合新版由用户判断）；结清 pending/confirmed/rejected/**proposed**（定论项 + 处方都锚在旧稿上，脱锚）；清 rejected 时记最终偏好。`reset_resume` 仍**无条件清空全部**（含 discussing，回到空态）。
-- **结清 = 软标记，不物理删（2026-08-20 大雷修复，推翻旧 `clear_by_status` 物理删行）**：旧实现版本变更时 `session.delete(row)` **物理删行**——丢「哪版产生/哪版被应用/清掉」的溯源，回滚回来查不到「上一版改了哪几点」。改为**软标记 + 全留存**：结清时 `confirmed→applied`、`pending/rejected→archived` + 记 `resolved_in_document_id`（目标版本 id），**行永不删**（`reset` 全清除外，仍物理删 `clear_pending`）。`list_suggestions` 默认只读**活跃**（`resolved_in_document_id IS NULL`），终态行不进面板/计数。**溯源查询** `list_applied_for_document(doc_id)`：某版「改了哪些点」= `status=applied AND resolved_in_document_id=该版` 的建议——§11.8「已生成/已回滚」引导的数据源（不给 resume_documents 加 changes 列，一份数据两处用）。
-- **回滚结清是「丢弃」不是「应用」（2026-08-21 修正）**：回滚时结清记到**被覆盖稿**（回滚前的当前稿）的 id，且 `confirmed→archived`（不是 applied）——回滚丢弃这轮改动、没应用进目标稿（目标稿是旧上传稿），标 applied 会谎称「目标稿应用了它们」。`soft_settle_by_status(..., discard=True)` 控制此分支；生成/改写/应用建议仍是 `confirmed→applied`（真应用）。§11.8 已回滚引导查被覆盖稿（`covered_document_id`，回滚动作点按 `ref_document_id` 当场传入）的 applied 建议，说「上一版改过哪些、现在撤回了」。
-- **去重**（2026-08-10 修 bug）：`accept` 校验状态，已 `confirmed`/`rejected` 的拒绝再接受——旧实现同一条可无限次收录。
-- **执行（"开始改"）**：只应用 **`confirmed`** 建议 → 文档任务增量改写 → 新稿。**门控**（2026-08-12）：有待定（pending）时前端禁用；有 discussing 未结论时前端弹确认（保留到下一版本）。
-- **`list_suggestions` 默认不返回 `rejected`**（历史行为）；四栏读取显式 `include_rejected=True`——rejected 是"版本内可撤回"，仍要展示在灰栏。
-- **跟稿走**：版本变更（生成/回滚/应用）时未定论建议按上面统一结清处理。
-- **历史库迁移（2026-08-10）**：`init_db` 检测旧结构（`accepted_at` 列）→ RENAME 为 `created_at`；缺 `status` 补（默认 `confirmed` = 历史已接受建议保持原语义）；缺 `split_from` 补。**此前漏了改名迁移导致查询 `no such column: created_at`（已修 + 回归测试）。**
+- **本表已停用**（2026-09-23）：优化点统一到 `change_records`。此处不再列旧状态机/结清/偏好规则——现行规则见下方 `change_records`。
+- **唯一活口**：投递页处方「改进」时读一条 `proposed` 行（`get_suggestion`）、收录后把它软结清 `archived`（`soft_settle_by_status`）。其余读写函数已随迁移删除。
 
-### `preferences`
-**用户判定偏好**——拒绝项 + 自定义标准（见 `docs/design/resume.md` §5、§12.5）。独立于事实库。
+### `change_records`
+**改动记录**（原因 → 改动点复合，2026-09-23）——优化点与用户决策记录**合一**为一张表（照 `user_facts` 的 title+points 形状）。取代简历侧 `optimization_pending` + `preferences(kind=custom)`。
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `id` | INTEGER PK | 自增 |
+| `reason` | TEXT | **改动原因（为什么）**——记录主体，一行一份、不重复（同原因 append 子项） |
+| `changes` | TEXT(JSON) | **改动点（改什么）**：`[{id, target, original, suggested, status}]`，**可空数组**（原因先行、子项后补）；子项 **id 记录内唯一 + 自带 status**（操作粒度 = 单条子项） |
+| `status` | TEXT（index） | 记录级兜底状态（子项全空时 / 整条存废）：pending/discussing/.../archived |
+| `kind` | TEXT（index） | `change` 本轮整改（用完即随版本结清）/ `decision` **跨版本持续决策**（每版注入生成/改写 prompt） |
+| `origin` | TEXT（index） | `agent` / `job_analysis` |
+| `session_id` | INTEGER（index） | 提出会话 |
+| `document_id` | INTEGER（index） | 基于哪版 |
+| `resolved_in_document_id` | INTEGER（index，可空） | 哪版被结清；NULL=活跃 |
+| `created_at` / `updated_at` | DATETIME | 时间戳 |
+
+设计要点：
+- **原因先行、子项后补**：`reason` 填、`changes=[]` 可先挂待定；聊定后填子项。
+- **同原因不重复**：新改动与已有记录同因 → append 子项，不新开行。
+- **操作粒度 = 单条子项**：逐条 accept/reject/discuss（`update_change_item_status`）。
+- **持久决策**：`kind=decision` 的活跃记录经 `build_decisions_text` 注入生成/改写 prompt（跨版本约束）；agent 用 `query_decisions` 查历史、改动前先查避免相悖。
+
+### `preferences`（**停用，待 DROP**）
+**用户判定偏好**（拒绝项 + 自定义标准）——**2026-09-23 停用**：「拒掉这一类」改记为 `change_records` 的一条 `kind=decision` 记录（版本变更清 `rejected` 子项时按 `type` 聚合），自定义标准并入 `change_records(kind=decision)`。本表**行留存不删**，库中 `clear_all_preferences`（核爆）仍会清空它。
 
 | 列 | 类型 | 说明 |
 |---|---|---|
 | `id` | INTEGER PK | 自增 |
 | `kind` | TEXT（index） | `reject` 拒绝项 / `custom` 自定义标准 |
 | `scope` | TEXT（index） | 偏好作用域（如 `quantify` 量化类，记"拒掉这一类"） |
-| `content` | TEXT | 偏好内容（如"后端成就不可量化，不提供量化"） |
+| `content` | TEXT | 偏好内容 |
 | `created_at` / `updated_at` | DATETIME | 时间戳 |
-
-设计要点：
-- 优化建议被拒 → 记 `{kind:'reject', scope:'quantify'}`（"拒掉这一类"，不是具体某条），同类不再建议；`kind='custom'` 存用户自定义标准，生成时注入 prompt（§13）。
-- 生命周期同事实：聊出来 → 确认 → 持久化 → 设置页可编辑。
 
 ### `jobs`
 **岗位聚合（阶段二 v1）**——一条 = 一个平台的**源岗位**（见 `docs/design/apply.md` §4）。跨源不去重：同一岗位在多个平台都保留（用户想投哪个平台投哪个，多多益善）。
@@ -316,7 +353,7 @@
 | `created_at` | DATETIME | 生成时间 |
 
 设计要点：
-- **`content` 只装嘱咐，不装处方**：报告叙事（总览/日报/面试 tips）在这里；**处方**是 `optimization_pending` 的行（`status=proposed`、`origin=job_analysis`），随优化点状态机走。一份报告 + 一列处方 = "一屏两物"，不是"一物两存"。
+- **`content` 只装嘱咐，不装处方**：报告叙事（总览/日报/面试 tips）在这里；**处方**是 `change_records` 里 `origin=job_analysis`、子项仍 `pending` 的记录（点「改进」收录）。一份报告 + 一列处方 = "一屏两物"，不是"一物两存"。
 - **`blocks`（2026-09-15 文/图穿插）**：`batch`/`daily` 报告的 content 带 `blocks: list[ReportBlock]`——analyze Agent 按叙述顺序产出的 `text`/`chart` 块（**图穿插在段落之间**，0~4 张、宁缺勿滥）。`ReportBlock` 契约见 `app/schemas/report_block.py`（text=Markdown 段 / chart 内嵌 `ChartSpec`，后者见 `app/schemas/chart.py`：6 种图型、series ≤ 2、字段须在 data 内）。读缓存时逐块校验（`_parse_blocks`），坏块（kind 不认得 / chart spec 配错）丢弃降级、不拖垮整份；**兼容旧缓存**——无 `blocks` 只有 `body` 时折成单个 text 块。前端另有 `toReportBlocks` + `isChartSpec` 兜底。
 - **不存"未就绪"行**：算完才写；读不到 = 该 scope 还没算过，由 `GET /analysis/*` 补算（起后台任务返回 `computing`，前端轮询）。
 - **`batch` 的 scope_key = 轮次 id**——分析输入 = **本轮抓到的那批**（检索条件会改、轮次间不可比，§11.7 grill 定）。无岗位的轮次 → 路由返回 `missing`，不起任务、不写报告。

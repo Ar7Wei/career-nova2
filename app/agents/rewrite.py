@@ -31,7 +31,6 @@ async def run_content_agent(
     resume_json: str,
     user_request: str,
     facts: str = "",
-    facts_feedback: str = "",
     target_role: str = "",
     preferences: str = "",
 ) -> tuple[str, str]:
@@ -39,12 +38,12 @@ async def run_content_agent(
 
     结构化输出：LLM 直接吐 Resume，version 名走 resume.summary 字段。
     2026-09-01：facts = 资料集当前事实，暖态只补缺口（JSON 权威，facts 不覆盖）。
-    2026-09-07（ADR 0012 机器门）：facts_feedback = 硬性补回清单（漏事实时喂回）。
+    2026-09-23：机器门回边已停，`facts_feedback` 参数随之删除（没有生产者了）。
     2026-09-07（ADR 0012 合并）：target_role/preferences = 侧重信号（service 读出注入，
     Node 不碰 DB），只指导内容侧重、不写进成品。
     改坏了（整份空）→ EmptyOutputError。
     """
-    prompt = load_rewrite_content_prompt(resume_json, user_request, facts, facts_feedback, target_role, preferences)
+    prompt = load_rewrite_content_prompt(resume_json, user_request, facts, target_role, preferences)
     resume: Resume = await llm_service.call([HumanMessage(content=prompt)], response_format=Resume)
     if not resume.basics.name and not resume.work and not resume.projects and not resume.skills and not resume.education:
         raise EmptyOutputError("模型没改出内容，换个说法再试或换模型")

@@ -1,8 +1,8 @@
-"""简历文档路由：版本列表、当前文档、原件、存生成版、回滚（可选连事实快照还原）。
+"""简历文档路由：版本列表、当前文档、原件、存生成版、回滚（整份恢复工作台快照）。
 
 仅做 HTTP 收发，业务交给 documents service（红线：Router 不写业务）。
-回滚语义：软作废（目标稿之后标 superseded、目标稿恢复当前，不删历史）；
-include_facts=True 时连目标版本那代的事实快照一起还原（覆盖当前 active 事实，旧事实标 superseded）。
+回滚语义：软作废（目标稿之后标 superseded、目标稿恢复当前，不删历史）+
+**整份恢复目标版开始时的工作台**（资料集 + 改动记录，直回不叠加；2026-09-24）。
 错误由 service 层抛 AppError、全局 handler 统一收口。
 """
 
@@ -104,9 +104,13 @@ async def save_generated(req: ResumeDocumentCreate) -> ResumeDocument:
 
 @router.post("/documents/rollback", response_model=RollbackResponse)
 async def rollback_document(req: RollbackRequest) -> RollbackResponse:
-    """回滚到目标稿（软作废：目标之后全标 superseded，目标变当前）。按 document_id 身份锚定。"""
-    doc, facts_restored = await rollback(req.document_id, req.include_facts)
-    return RollbackResponse(version=doc.version, facts_restored=facts_restored)
+    """回滚到目标稿（软作废：目标之后全标 superseded，目标变当前）。按 document_id 身份锚定。
+
+    2026-09-24：回滚 = 整份恢复该版**开始时**的工作台（资料集 + 改动记录），无开关；
+    回滚到最早一版被拒（那是「重置」，见 service.rollback）。
+    """
+    doc, workspace_restored = await rollback(req.document_id)
+    return RollbackResponse(version=doc.version, workspace_restored=workspace_restored)
 
 
 @router.post("/documents/reset", response_model=ResumeResetResponse)

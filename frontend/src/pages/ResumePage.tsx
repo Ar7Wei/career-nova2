@@ -77,10 +77,16 @@ export function ResumePage() {
   const store = useResumeStore()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)
-  const nativeText = useBlobText(store.resumeUrl, store.resumeExt)
+  // 左栏「当前该显示哪份稿」的来源（2026-09-24 乐观回退）：回滚中显示 rollbackTarget（目标稿），
+  // 否则显示 store 的当前稿。blob 文本、预览分档都跟着这个来源走——否则乐观期间 txt/md 会读到旧稿原文。
+  const optimistic = store.rollingBack && store.rollbackTarget ? store.rollbackTarget : null
+  const previewUrl = optimistic ? optimistic.resumeUrl : store.resumeUrl
+  const previewExt = optimistic ? optimistic.resumeExt : store.resumeExt
+  const nativeText = useBlobText(previewUrl, previewExt)
   // S7 统一 busy（2026-08-14）：busy = generating || applying。左栏写动作按钮
   // （重置/移除/修复/确认生成/回到初始版本）+ 抽取卡在 busy 时禁用。
-  const busy = store.generating || store.applying
+  // 2026-09-24：回滚进行中（rollingBack）也算 busy——工作台正被换回，写动作一律锁住。
+  const busy = store.generating || store.applying || store.rollingBack
 
   // 左右分割（甲+拖）：leftPct = 左栏占比 %，拖分割条改；grid 模板由内联 style 驱动。
   const layoutRef = useRef<HTMLDivElement>(null)
@@ -270,10 +276,25 @@ export function ResumePage() {
           </div>
         </div>
 
-        <div className="resume-preview" ref={previewBoxRef}>
-          {/* 旧文档预览：previewPending（有新预览待确认）时隐藏，只渲染新预览（2026-09-08 修上下屏——
-              旧实现两个 ResumePreview 同时渲染、纵向堆叠成上下两屏，本意是「覆盖」不是「对比」）。 */}
-          {!store.previewPending && (store.resumeUrl || store.previewMarkdown || store.previewHtml) ? (
+        <div className={`resume-preview${store.rollingBack ? ' rolling-back' : ''}`} ref={previewBoxRef}>
+          {/* 回滚乐观态（2026-09-24）：左栏先按 rollbackTarget 显示目标稿（blob/原件随它），
+              半透明 + 右下角「正在回滚…」，等后端回来由 loadCurrent 顶掉。这样点完确认立刻有反应，
+              不用干等后端那套「软作废 + 工作台恢复 + 开场引导」——后端已把引导挪后台，但仍有余量。
+              与下方常驻预览二选一：乐观态优先，故常驻分支加 `!rollingBack` 条件。 */}
+          {optimistic ? (
+            <ResumePreview
+              url={optimistic.resumeUrl}
+              ext={optimistic.resumeUrl ? optimistic.resumeExt : ''}
+              markdown={optimistic.markdown}
+              text={nativeText}
+              html={optimistic.html}
+              typography={store.typography}
+              pageZoom={effectivePageZoom / 100}
+              showPageGuides={Boolean(optimistic.html)}
+            />
+          ) : /* 旧文档预览：previewPending（有新预览待确认）时隐藏，只渲染新预览（2026-09-08 修上下屏——
+              旧实现两个 ResumePreview 同时渲染、纵向堆叠成上下两屏，本意是「覆盖」不是「对比」）。 */
+          !store.previewPending && (store.resumeUrl || store.previewMarkdown || store.previewHtml) ? (
             <ResumePreview
               url={store.resumeUrl}
               ext={store.resumeUrl ? store.resumeExt : ''}
@@ -297,6 +318,15 @@ export function ResumePage() {
               <p>{t('resume.emptyChatHint')}</p>
             </div>
           ) : null}
+
+          {/* 回滚进行中指示（轻中间态）：浮在乐观预览右下角，只说明「正在回滚…」，**不给停止按钮**
+              （回滚是事务性的，停在中间态比慢更糟，见 selectWorkingStoppable）。 */}
+          {store.rollingBack && (
+            <div className="resume-rollback-float glass">
+              <span className="chat-typing" />
+              <span>{t('resume.rollingBack')}</span>
+            </div>
+          )}
 
           {/* 生成预览态（2026-08-12 生成入口收敛到聊天）：agent 工具产出暂存预览，
               previewPending 时用预览内容覆盖当前文档显示 + 悬浮「确认保存 / 重新生成」条。

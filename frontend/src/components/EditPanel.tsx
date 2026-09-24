@@ -10,7 +10,9 @@ import { useT } from '@/lib/i18n'
 /**
  * 「编辑项」面板（2026-09-02 grill 定稿）：预览区顶栏的调节入口，点击展开玻璃浮窗（ToolTab 原语，
  * 与优化点/资料集同款）。承载**排版自由度五参数**（数据层，挂版本落库 + 关联导出）：
- *   字号 scale / 行距 lineHeight / 段距 spacing / 字间距 letterSpacing / 栏距 gutter。
+ *   字号 scale / 行距 line_height / 段距 spacing / 字间距 letter_spacing / 栏距 gutter。
+ *   `key` 是 Typography 的**后端字段名（蛇形）**，`labelKey` 是 i18n 键（驼峰）——两者故意不同形，
+ *   别顺手把 key 改成驼峰：Typography 无转换层，改了面板就取不到值（2026-09-24 修的正是这个）。
  *
  * 每行形态 = Slider 粗调 + 右侧 NumberInput 精调/直输，两者绑同一个值（2026-09-02 grill (a)）。
  * 改动本地即时预览（HtmlPreview 注入排版变量跟手），防抖 500ms 回后端重渲染落库（store.setTypography）。
@@ -19,9 +21,10 @@ import { useT } from '@/lib/i18n'
  * 仅生成的简历开放（上传原件不可编辑——父组件 ResumePage 控制显隐/置灰，这里不判断）。
  */
 
-/** 一个排版参数的定义：key、取值范围、步进、小数位、显示单位后缀、默认值。 */
+/** 一个排版参数的定义：key（Typography 后端字段名，蛇形）、取值范围、步进、小数位、显示单位后缀、默认值。 */
 interface ParamSpec {
   key: keyof Typography
+  /** i18n 文案键（驼峰）——与 key 不同形是**故意的**：key 要跟后端字段名走，文案键跟 i18n 命名走。 */
   labelKey: 'resume.fontSize' | 'resume.lineHeight' | 'resume.spacing' | 'resume.letterSpacing' | 'resume.gutter'
   min: number
   max: number
@@ -37,8 +40,8 @@ interface ParamSpec {
 const PARAMS: ParamSpec[] = [
   { key: 'scale', labelKey: 'resume.fontSize', min: 0.5, max: 1.5, step: 0.01, decimals: 2, unit: '倍', def: 1 },
   // 字间距紧跟字号（2026-09-02 反馈）：两者都管「字」，放一起调节更顺手。
-  { key: 'letterSpacing', labelKey: 'resume.letterSpacing', min: -1, max: 3, step: 0.1, decimals: 1, unit: 'px', def: 0 },
-  { key: 'lineHeight', labelKey: 'resume.lineHeight', min: 1.0, max: 2.0, step: 0.05, decimals: 2, unit: '倍', def: 1.25 },
+  { key: 'letter_spacing', labelKey: 'resume.letterSpacing', min: -1, max: 3, step: 0.1, decimals: 1, unit: 'px', def: 0 },
+  { key: 'line_height', labelKey: 'resume.lineHeight', min: 1.0, max: 2.0, step: 0.05, decimals: 2, unit: '倍', def: 1.25 },
   // 段距下限放宽到 0（2026-09-02 反馈「还能再缩更小」）：0 = 段间无额外留白，内容压到最挤。
   { key: 'spacing', labelKey: 'resume.spacing', min: 0, max: 2.0, step: 0.05, decimals: 2, unit: '倍', def: 1 },
   // 栏距（绝对 px，2026-09-02）：左右两栏缝隙，主两栏 flex 化后由 column-gap 单值控制。默认 55 = 原 5+50 padding。
@@ -60,11 +63,17 @@ export function EditPanel({ disabled = false }: { disabled?: boolean }) {
   const previewHtml = useResumeStore((s) => s.previewHtml)
   const [fitting, setFitting] = useState(false)
 
-  /** 改单个参数：钳取 + 量化到精度，合并进 typography（其余参数不变）。 */
+  /** 改单个参数：钳取 + 量化到精度，合并进 typography（其余参数不变）。
+   *
+   *  空值直接忽略：清空输入框时 Mantine 回吐 `''`，而 `Number('')` 是 0 会蒙混过 isFinite，
+   *  写进 store 后若与当前值相等则连重渲染都没有 → 框停在空态（2026-09-24）。
+   *  改值用 `get()` 取最新 typography，不闭包渲染时的快照——防连改两项时后写覆盖前写。 */
   const setParam = (spec: ParamSpec, raw: number | string) => {
+    if (raw === '' || raw === null || raw === undefined) return
     const n = typeof raw === 'number' ? raw : Number(raw)
     if (!Number.isFinite(n)) return
-    setTypography({ ...typography, [spec.key]: roundTo(clamp(n, spec), spec.decimals) })
+    const next = { ...useResumeStore.getState().typography, [spec.key]: roundTo(clamp(n, spec), spec.decimals) }
+    setTypography(next)
   }
 
   /** 自动一页（2026-09-02 grill 定稿）：隐藏 iframe 多轮量高驱动求解器，把三参数压到/撑到一页。
@@ -74,7 +83,9 @@ export function EditPanel({ disabled = false }: { disabled?: boolean }) {
     if (fitting || !previewHtml) return
     setFitting(true)
     try {
-      const result = await solveOnePageByMeasure(previewHtml, typography)
+      // 起点取 store 最新值（非渲染闭包快照）：本函数是异步入口，防「刚改完某项立刻点自动一页」
+      // 拿到上一帧的旧排版当起点。
+      const result = await solveOnePageByMeasure(previewHtml, useResumeStore.getState().typography)
       if (result.ok) {
         setTypography(result.typography) // 一次性应用：预览一步到位刷新 + 防抖落库
         notifications.show({ color: 'green', title: t('resume.autoOnePage'), message: t('resume.autoOnePageDone') })
@@ -103,6 +114,11 @@ export function EditPanel({ disabled = false }: { disabled?: boolean }) {
       disabledReason={disabled ? t('resume.editPanelDisabled') : undefined}
       closeOnIframeClick
     >
+      {/* 面板标题（2026-09-24 用户）：与版本历史/优化点等其它 ToolTab 浮窗对齐——它们都有
+          suggestion-panel-head 标题块，编辑项之前缺，补同款。 */}
+      <div className="suggestion-panel-head">
+        <span className="suggestion-panel-title">{t('resume.editPanel')}</span>
+      </div>
       <div className="edit-panel-body">
         {PARAMS.map((spec) => (
           /* 每项一个 grid：行1=标签|滑块|数值+单位，行2=小字落在滑块列（第2列）——

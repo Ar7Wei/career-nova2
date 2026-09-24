@@ -8,15 +8,15 @@
 import json
 from typing import Any, Literal, cast, get_args
 
-from app.schemas.optimization import SuggestionDecision
+from app.schemas.optimization import ChangeDecision
 from app.services.direction import SUPPORTED_CITIES
 
 # 可选城市（给方向工具描述用，单一真相源 SUPPORTED_CITIES，2026-09-01）
 CITY_LIST = "、".join(SUPPORTED_CITIES)
 
-# 优化点操作决定闭集（§12.6）：工具入参靠它拦非法值。从 SuggestionDecision 派生，
+# 优化点操作决定闭集（§12.6）：工具入参靠它拦非法值。从 ChangeDecision 派生，
 # 单一真相源——手写的平行集合会随 schema 增删而静默漂移。
-VALID_DECISIONS = frozenset(get_args(SuggestionDecision))
+VALID_DECISIONS = frozenset(get_args(ChangeDecision))
 
 # LangChain 工具调用 → 我们的事实分类
 _CATEGORY_MAP: dict[str, Literal["basic", "education", "work", "projects", "skill", "other"]] = {

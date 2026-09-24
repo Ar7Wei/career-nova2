@@ -19,10 +19,10 @@ from langchain_core.messages import HumanMessage
 from app.core.errors import ConflictError, EmptyOutputError
 from app.prompts import load_generate_resume_prompt
 from app.repositories.facts import list_facts
-from app.repositories.optimization import list_preferences
 from app.schemas.resume import Resume, resume_to_json
 from app.services.direction import get_direction
 from app.services.llm import llm_service
+from app.services.optimization import build_decisions_text
 from app.utils.facts import flatten_facts
 
 
@@ -41,13 +41,13 @@ async def build_focus() -> tuple[str, str]:
     """读当前侧重信号 (target_role, preferences)——生成改写都喂（ADR 0012 合并）。
 
     target_role 来自方向槽位（「目标岗位：X」active fact，经 get_direction 读回）；
-    preferences 来自 custom 偏好。侧重只指导内容侧重、不写进简历成品
+    preferences 来自**持久决策记录**（kind=decision 的改动记录，2026-09-23 起取代 custom 偏好）——
+    它们是跨版本约束（如"不要项目经历栏，并进工作经历"）。侧重只指导内容侧重、不写进简历成品
     （prompt 层规则，见 generate_resume.md / rewrite_content.md）。Node 不碰 DB，
     由 service 读出后经 state / 参数传进 prompt。
     """
     direction = await get_direction()
-    prefs = await list_preferences(kind="custom")
-    preferences = "\n".join(f"- {p.content}" for p in prefs)
+    preferences = await build_decisions_text()
     return direction.role, preferences
 
 
@@ -74,7 +74,7 @@ async def generate_json_from_facts(
 
     target_role：目标岗位（可空 = 通用版）；instruction：冷启动注入的改进要求
     （已确认建议 / 用户改简历请求，生成时一并满足）。
-    preferences：custom 偏好文本（方案 A 选项 1）——由调用方（cold_start_node）从
+    preferences：持久决策记录文本（kind=decision）——由调用方（cold_start_node）从
       state.preferences 透传，与暖态 content 节点同一数据源；传 None 时回退到本函数
       内部现读（保留旧行为，兼容直接调用方）。
     返回结构化真身 JSON 字符串。无 facts → ConflictError（无法生成）。
@@ -85,8 +85,7 @@ async def generate_json_from_facts(
     if not facts_text:
         raise ConflictError("还没有任何用户事实，无法生成简历——先在聊天里聊聊你的经历吧")
     if preferences is None:
-        prefs = await list_preferences(kind="custom")
-        preferences = "\n".join(f"- {p.content}" for p in prefs)
+        preferences = await build_decisions_text()
     prompt = load_generate_resume_prompt(target_role or "", facts_text, preferences, instruction)
     resume = await _call_resume(prompt, "模型没生成出简历内容，换个说法再试或换模型")
     return resume_to_json(resume)

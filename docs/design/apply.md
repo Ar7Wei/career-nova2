@@ -520,7 +520,7 @@ WebContentsView 的核心代价 = 主进程专属 + 手动 `setBounds` 定位（
 
 （术语 → CONTEXT.md「处方 vs 嘱咐」）
 
-- **处方** = 可执行、被追踪、有生命周期的建议 → **只由「未处理」分析产出**。落 `optimization_pending`，初始状态 **`proposed`**。
+- **处方** = 可执行、被追踪、有生命周期的建议 → **只由「未处理」分析产出**。落 `change_records`（`origin=job_analysis`，子项初始 `pending`，即"待收录"）。
 - **嘱咐** = 有参考价值但不被追踪的结论（"投了很久没回音的共性是…"、"面这家可以多准备 X"）→ **已投递、面试**产出。是「分析报告」的一部分，**没有状态、无处收录**。
 
 **医生比喻**：开药 vs 嘱咐多喝水——**开了药你得复诊**（有状态），**嘱咐过就过去了**（随报告）。
@@ -553,7 +553,7 @@ WebContentsView 的核心代价 = 主进程专属 + 手动 `setBounds` 定位（
 - **一轮 = 一次 kick**（后端猎聘一段 + Electron 前程无忧一段），`round_id` 由 kick 统一分配、两平台共用——批次键必须跨平台（§11.7.4 的批次本就假定"一批来自两个平台"）。
 - **触发点在前端 kickCrawl 尾部**（`GET /analysis/unprocessed?round_id=`）——等前程无忧那段跑完（那个慢），后端不耦合爬虫 service。**分析范围 = 本轮进库的那批**（用户定：检索条件会改、轮次间不可比）。
 - **端点非阻塞**：有缓存直接返回；没有则起后台任务返回 `computing`，前端轮询到 `ready`。**无岗位的轮次返回 `missing`**（不起任务、不写空报告）。
-- **`analysis_reports.content` 只装嘱咐**；`batch` 的**处方**另落 `optimization_pending`（`status=proposed`）——报告与处方是"一屏两物"。
+- **`analysis_reports.content` 只装嘱咐**；`batch` 的**处方**另落 `change_records`（`origin=job_analysis`，子项 `pending`）——报告与处方是"一屏两物"。
 
 #### 11.7.6 流程形状：**graph 化 + analyze 用 Agent**（2026-09-15 方向修正，经确认）
 
@@ -586,16 +586,16 @@ route_scope → load(取数) → prepare(备料) → compute_stats(代码前置�
 #### 11.7.7 闭环：点「改进」→ 优化点 → 聊天 agent（**已有机制，不需新建**）
 
 ```
-分析产出「处方」(optimization_pending, status=proposed)
+分析产出「处方」(change_records, origin=job_analysis, 子项 pending)
    ↓ 用户点「改进」
-优化点面板 (status=pending)   ← 到这一步，聊天 agent 自动就看见了
+优化点面板 (子项 confirmed)   ← 到这一步，聊天 agent 自动就看见了
    ↓ 去简历页跟 agent 聊
 agent 改简历 / 提议改方向（refine_direction / commit_direction，均已存在）
 ```
 
-- **「改进」= 一次状态转换**：`proposed → pending`。**分析面板与优化点是同一行的两个视图**，不是两份数据、不存在"同步"。
-- **Agent 不需要接收动作**：优化点面板**本来就每轮注入**聊天 agent 的 system prompt（`_assembly.py:31` → `render_panel` 四栏）。`proposed` 的行**不注入**——「改进」就是那道帘子。
-- **优化点面板需排除 `proposed`**（否则分析建议一产出就"已经在待办里"，「改进」按钮失去意义）。
+- **「改进」= 收录成一条改动记录**（2026-09-23，`promote_suggestion`）：把旧处方行落成 `change_records` 的一条记录、**子项直接 `confirmed`**（点「改进」= 用户已认可这条处方），并把原行软结清（`archived`，留溯源）。**分析面板与优化点是同一件事的两个视图**，不是两份数据、不存在"同步"。
+- **Agent 不需要接收动作**：优化点面板**本来就每轮注入**聊天 agent 的 system prompt（`_assembly.py` → `render_records_panel`）。**待收录（子项 pending）的处方不注入**——「改进」就是那道帘子。
+- **分析面板需排除已收录的处方**（`_pending_prescriptions` 只取仍有 pending 子项的 job_analysis 记录），否则分析建议一产出就"已经在待办里"，「改进」按钮失去意义。
 - **方向降级归聊天 agent**（用户定）：投递页**只做分析**，不产可执行的方向建议。"迎合不了市场 → 换方向"这种判断由 agent 在聊天里做。**投递页不自动化降级。**
 
 #### 11.7.8 要补的洞（都是既有短板，不是新功能）

@@ -11,7 +11,7 @@ graph 组装时由装配层注入工具（见 _assembly.py），graph 不 import
 docstring 是 LLM 工具契约（schema + 使用时机），从 legacy 原样搬来，措辞不可随意改动。
 """
 
-from typing import Any, cast
+from typing import Any
 
 from datetime import UTC, datetime
 
@@ -19,9 +19,7 @@ from langchain_core.tools import tool
 
 from app.core.errors import ConflictError, EmptyOutputError, LLMUnavailableError
 from app.core.logging import logger
-from app.repositories.optimization import get_suggestion
-from app.schemas.facts import FactCreate
-from app.schemas.optimization import Suggestion, SuggestionDecision
+from app.schemas.facts import FactCreate, FactUpdate
 from app.schemas.direction import Direction
 from app.services.chat_tools._common import (
     CITY_LIST,
@@ -35,9 +33,18 @@ from app.services.chat_tools._common import (
     to_suggestion_type,
 )
 from app.services.direction import commit_direction, refine_direction, set_direction_changed, set_pending_disposal
-from app.services.facts import record_chat_facts, supersede_fact
+from app.services import execution_proposal
+from app.services.execution_proposal import ExecutionKind
+from app.services.facts import modify_fact, record_chat_facts, supersede_fact
 from app.services.market import query_market, render_market_snapshot
-from app.services.optimization import record_custom_preference, record_suggestion, update_suggestion
+from app.services.optimization import (
+    _DECISION_TO_STATUS,
+    _append_or_create_by_reason,
+    query_decisions,
+    record_decision,
+    set_change_item_status,
+    set_record_status,
+)
 from app.services.rewrite import generate_preview
 from app.services.timeline import TimelinePeriod, calc_timeline, render_timeline_report
 
@@ -59,6 +66,8 @@ async def record_facts_tool(
     on_resume（可选）：这条事实该不该写进简历成品。默认 True（工作/教育/项目/技能/基本信息等简历内容都上）。
       敏感/不该上的信息传 False：薪资、年龄、婚姻、健康、gap 弱点（如"学历不够""没有大厂经历"）、
       想淡化的经历、求职方向（目标岗位/城市）等。标 False 的事实不会进简历、也不会被"内容永不丢"校验。
+      ⚠️ 只在**新建**时设。用户事后说「以后别列 X 了」（X 已经录进去了）→ 别重新录一遍，
+      用 `set_fact_on_resume` 把那条翻成 False（见系统提示的「撤下东西 vs 记决策」）。
     工具返回 记/跳/冲突：recorded 已写入、skipped 已存在未重复写、conflicts 与你已记过的事实冲突（需反问用户）。
     """
     title = title.strip()
@@ -110,6 +119,33 @@ async def supersede_fact_tool(
     return f"已用新事实「{title}」顶掉旧事实 #{existing_id}。"
 
 
+@tool("set_fact_on_resume")
+async def set_fact_on_resume_tool(fact_id: int, on_resume: bool) -> str:
+    """把某条事实翻成「上简历 / 不上简历」——用户要撤下、或想放回某样东西时用。
+
+    这是「从简历上拿掉某条具体内容」的动作（如"以后别列 DevOps 了""把视频制作撤掉"），
+    和「记一条决策」不是一回事——见系统提示里的分工说明。
+
+    - `on_resume=False`：这条以后每版都不上简历。它是**跨版本**的（不受版本结清影响），
+      翻一次永久生效；下轮生成/改写会顺手把它从简历里删掉。
+    - `on_resume=True`：放回。之前撤下的东西想重新上简历时用。
+    - fact_id：**必须来自每轮注入的「你已了解的用户情况」里的 `#数字`**（如 `#16`）——
+      资料集里有多条重名条目（如多条「个人概述：…」），按标题猜会打错人。
+      列表里没有这条？先 `record_facts` 录进去，再翻。
+
+    **翻完必须告知用户**（硬约束）：一句话说清你动了哪条、以后每版都不再显示——
+    翻错了用户能当场纠正。
+    **本轮要不要顺带出稿**：翻开关只改资料集，**不会自动改当前简历**。用户如果同时想
+    这版就删掉，就在 `generate_resume` 的 brief 里同时写明"把 X 从简历里删掉"。
+    """
+    fact = await modify_fact(fact_id, FactUpdate(on_resume=on_resume))
+    if fact is None:
+        return f"事实 #{fact_id} 不存在——可能已被处理，别重复翻。"
+    state = "以后每版上简历" if on_resume else "以后每版都不上简历"
+    logger.info("fact_on_resume_toggled", fact_id=fact_id, on_resume=on_resume)
+    return f"已把事实 #{fact_id}「{fact.title}」标为：{state}。记得一句话告诉用户。"
+
+
 @tool("suggest_improvements")
 async def suggest_improvements_tool(
     suggestions: list[dict[str, Any]],
@@ -126,128 +162,110 @@ async def suggest_improvements_tool(
     - original：原文；suggested：建议改法；reason：为什么（引用判定标准）
     - severity：high / medium / low
 
+    落库时**按 reason 聚类**：同一 reason 的多条改动点合进一条「改动记录」（原因 → 改动点子项），
+    不各开一行、不重复抄原因。reason 是记录主体，改动点挂在它下面、可逐条定论。
+
     **规则全文见 optimize 技能**（`read_file` 读）：六类各自的含义、力度克制、面板四栏交互、
     敲定收口的规矩都在那里。这里只交代函数的入参形状，不重复规则细节——规则只写一处。
 
-    产出会**落库**到建议面板（左栏待定），用户去面板逐条处理。落完你在聊天里简述抓到的点，
+    产出会**落库**到面板待定栏，用户去面板逐条处理。落完你在聊天里简述抓到的点，
     围绕它们展开这一轮。
     """
     raw = suggestions or []
-    saved_ids: list[int] = []
+    # reason → 该原因下的改动点子项列表（聚类：同原因并进同一条记录）
+    by_reason: dict[str, list[dict]] = {}
     for item in raw:
         type_val = to_suggestion_type(str(item.get("type", "structure")))
         sev_val = to_severity(str(item.get("severity", "medium")))
         if type_val is None or sev_val is None:
             logger.warning("suggestion_parse_skipped", raw=item)
             continue
-        s = Suggestion(
-            type=type_val,
-            target=str(item.get("target", "")),
-            original=str(item.get("original", "")),
-            suggested=str(item.get("suggested", "")),
-            reason=str(item.get("reason", "")),
-            severity=sev_val,
+        reason = str(item.get("reason", "")).strip() or "简历改进"
+        by_reason.setdefault(reason, []).append(
+            {
+                "target": str(item.get("target", "")),
+                "original": str(item.get("original", "")),
+                "suggested": str(item.get("suggested", "")),
+                "type": type_val,
+                "severity": sev_val,
+            }
         )
-        p = await record_suggestion(s)
-        if p.id is not None:
-            saved_ids.append(p.id)
-    return f"已落库 {len(saved_ids)} 条建议（#{', '.join(map(str, saved_ids))}），进建议面板左栏待定，等待用户处理。"
-
-
-@tool("update_suggestion")
-async def update_suggestion_tool(
-    suggestion_id: int,
-    decision: str,
-    refined_target: str = "",
-    refined_original: str = "",
-    refined_suggested: str = "",
-    refined_reason: str = "",
-    refined_type: str = "",
-    refined_severity: str = "",
-    split_to: list[dict[str, Any]] | None = None,
-) -> str:
-    """更新一条优化点建议的状态/内容（分级自主度，2026-08-29）。
-
-    - suggestion_id：建议编号（来自注入的「当前简历的待执行优化建议」清单）。
-    - decision：
-      - `accept` 接受（→ 已确认）：**高风险**——只有用户给了**确定口吻**才动
-        （「这条收了吧 / 就按这个改」）。
-      - `reject` 拒绝（→ 已拒绝灰栏）：**高风险**（版本变更会记"拒掉这一类"偏好）——
-        只有用户给了**确定口吻**才动（「这条算了 / 别改了」）。
-      - `discuss` 聊一聊（→ 正在聊）：**低风险，随便动**——聊哪条就挪哪条，让面板跟得上。
-      - `retract` 撤回（→ 待定）：**低风险，随便动**。
-      - `refine` 细化（→ 待定）：讨论后修改了改法，传 refined_* 覆盖内容。
-      - `split` 分裂：一条拆成多条，传 split_to。
-
-    分级自主度（2026-08-29）：未定论的两栏（待定/正在聊）之间你随便挪；只有往
-    「已确认」这个定论态（下次要真改进简历）走才要确定口吻；拒绝会记偏好，也要确定口吻。
-    - refine：refined_type/refined_severity 留空 = 沿用原分类/严重度（细化通常只改措辞）。
-    - split：传 split_to（每条 dict 同 suggest_improvements 格式），原条回待定、新条进面板。
-    """
-    decision = decision.strip().lower()
-    # 工具边界收敛：decision 必须落在闭集内，非法值直接回可读反馈（不落进 service 的未知分支）。
-    if decision not in VALID_DECISIONS:
-        return f"未知操作：{decision}（accept/reject/refine/split/discuss/retract）。"
-    refined = None
-    if decision == "refine":
-        existing = await get_suggestion(suggestion_id)
-        if existing is None:
-            return f"建议 #{suggestion_id} 不存在。"
-        refined_type = to_suggestion_type(refined_type) or cast(Any, existing.type)
-        refined_severity = to_severity(refined_severity) or cast(Any, existing.severity)
-        refined = Suggestion(
-            type=refined_type,
-            target=refined_target or existing.target,
-            original=refined_original or existing.original,
-            suggested=refined_suggested or existing.suggested,
-            reason=refined_reason or existing.reason,
-            severity=refined_severity,
-        )
-    split_list: list[Suggestion] | None = None
-    if decision == "split" and split_to:
-        split_list = []
-        for item in split_to:
-            type_val = to_suggestion_type(str(item.get("type", "structure")))
-            sev_val = to_severity(str(item.get("severity", "medium")))
-            if type_val is None or sev_val is None:
-                continue
-            split_list.append(
-                Suggestion(
-                    type=type_val,
-                    target=str(item.get("target", "")),
-                    original=str(item.get("original", "")),
-                    suggested=str(item.get("suggested", "")),
-                    reason=str(item.get("reason", "")),
-                    severity=sev_val,
-                )
-            )
-    return await update_suggestion(suggestion_id, cast(SuggestionDecision, decision), refined=refined, split_to=split_list)
+    saved_ids: list[int] = []
+    for reason, items in by_reason.items():
+        # 同原因不新开行：已有一条活跃记录就把子项 append 进去（原因先行、子项后补的兑现）。
+        rec = await _append_or_create_by_reason(reason, items)
+        if rec.id is not None:
+            saved_ids.append(rec.id)
+    return f"已落库 {len(saved_ids)} 条改动记录（#{', '.join(map(str, saved_ids))}），进面板待定，等待用户处理。"
 
 
 @tool("apply_suggestions")
-async def apply_suggestions_tool() -> str:
-    """执行「开始改」：把已确认的建议批量应用进简历 → 出一版待确认的简历草稿。
+async def apply_suggestions_tool(brief: str = "") -> str:
+    """执行「开始改」：把已确认的改动点应用进简历 → 出一版待确认的简历草稿。
 
-    仅在**用户明确同意开始改**时调用（如「开始改吧 / 应用这些建议 / 生成新版本」）。
-    这是昂贵且不可逆的动作（跑整份改写 + 排版重渲染，且确认后开新 session、面板结清），
-    所以**动手前必须先问用户、得了准再调**。
+    ⚠️ **先提案再执行（2026-09-24）**：本工具**只在用户明确同意开始改之后**调用。
+    你想改时先调 `propose_execution(kind="apply")` 提案、用嘴问用户；用户回话后，
+    下一轮才能调本工具——否则会被系统拒绝。
 
     前置门控（由你负责把关）：
-    - 还有「待定」建议 → **先别改**，逐条念给用户、用 update_suggestion 清掉待定，清空后再问。
+    - 还有「待定」改动点 → **先别改**，逐条念给用户、用 set_change_status 清掉待定，清空后再问。
     - 只有「正在聊」未结论 → 口头交代「这几条这轮先不带上（会留到下一版）」再改。
     - 已确认数量 1~2 条 → 建议再攒攒（改一轮成本不低）；用户坚持就改。
-    工具会产出一版**暂存预览**（应用了已确认建议），用户在左侧预览确认后才保存为新稿；
-    改完你在聊天里用一句话说明这版动了哪些点。
+
+    - brief（可选）：你组装的**完整指令**——这轮要干什么、怎么干、为什么、要遵守哪些决策
+      （用 query_decisions 查好后写进来）。留空则只应用已确认的改动点。
+    **你来组装 brief**：graph 只执行、不查历史，约束要靠你查好、写进 brief。
+    工具产出一版**暂存预览**，用户确认后才保存为新稿；改完你在聊天里用一句话说明这版动了哪些点。
     """
+    blocked = await execution_proposal.check("apply")
+    if blocked is not None:
+        return blocked
     try:
-        await generate_preview(user_request="应用已确认的优化建议", apply_confirmed=True)
+        await generate_preview(user_request=brief or "应用已确认的改动", apply_confirmed=True)
     except ConflictError as e:
         return f"改不了：{e.message}"
     except EmptyOutputError as e:
         return f"没改成功：{e.message}"
+    execution_proposal.clear()  # 只在真出成稿后消费提案——失败时留着，用户不必重复点头
     return (
-        "已出一版应用了已确认建议的简历草稿（暂存预览态，未保存）。"
+        "已出一版应用了已确认改动的简历草稿（暂存预览态，未保存）。"
         "请用户看左侧预览：确认就保存为新版本，不满意可「带意见重改」或继续说要求。"
+    )
+
+
+@tool("propose_execution")
+async def propose_execution_tool(kind: str, brief: str = "") -> str:
+    """提议出稿，**等用户点头**——出稿前必须先走这一步（2026-09-24 硬约束）。
+
+    你觉得聊得差不多了，**不要直接调 `generate_resume` / `apply_suggestions`**——那会在用户
+    毫无准备的时候直接跑图出稿、把没聊完的点晾在一边。正确做法是调本工具提案，然后**用嘴**
+    把事情讲清楚、问他一句，等他回话。
+
+    调完本工具后，你要在回复里说清三件事：
+    1. **打算出什么**：说清这版**会带上**哪些改动点、**这版不带**哪些（待定的、正在聊的），
+       再把你写进 `brief` 的指令意思讲给他听——这些清单下面会给你。
+    2. **问他现在出还是接着聊**：「现在出一版，还是先把那几条聊完？」
+    3. 别自作主张——用户说「再聊聊」「先别出」就不出；说「出吧」「开始改」才在**下一轮**执行。
+
+    - kind：出稿类型。`generate` = 出一版（生成/改稿）；`apply` = 开始改（应用已确认的改动）。
+    - brief（可选）：你拟的完整指令（这轮要干什么、怎么干、为什么、要遵守哪些决策）——
+      **用户会看到它**，所以写清楚、别夹带他没说过的东西。
+
+    ⚠️ 提案只在**当前这一轮**有效：用户回话之后、下一轮才能调执行工具。同轮里提完案就执行
+    会被系统拒掉（用户在下一轮之前没机会说话）。
+    """
+    k = kind.strip().lower()
+    if k == "generate":
+        ek: ExecutionKind = "generate"
+    elif k == "apply":
+        ek = "apply"
+    else:
+        return f"未知的出稿类型：{kind}（应为 generate 出一版 / apply 开始改）。"
+    await execution_proposal.propose(ek, brief)
+    plan = await execution_proposal.render_execution_plan()
+    return (
+        f"已提案（{ek}）。**现在用嘴问用户**，把下面这些讲清楚，等他回话：\n\n{plan}\n\n"
+        "（用户回话后，下一轮再调对应的出稿工具执行。）"
     )
 
 
@@ -258,17 +276,23 @@ async def generate_resume_tool(
 ) -> str:
     """出简历草稿（统一入口，1.3，ADR 0012 合并：生成与改写同一工具）。
 
-    当用户要「生成/重做一份简历」、或要「基于当前简历改内容/改版式」时都调本工具——
-    系统自己会判：还没有简历就从事实库生成第一版，已有简历就在现有这份上按 request 改。
-    你不用区分「生成 vs 改写」，把用户的原话请求如实传给 request 即可。
+    ⚠️ **先提案再执行（2026-09-24）**：本工具**只在用户明确同意出稿后**调用。
+    你觉得该出稿时，先调 `propose_execution(kind="generate")` 提案、用嘴问用户；
+    用户回话后，下一轮才能调本工具——否则会被系统拒绝。
+
     产出**暂存预览态**（不写库），用户在人门确认才保存为新版本；不满意可带意见重改。
 
-    - request：用户的目标/修改请求原话（自然语言，如实转述，不要精简）。如"帮我生成一份
-      简历"、"把腾讯那段量化一下"、"重排一版式"。
+    - request：**你组装的完整 brief**——这轮要干什么、怎么干、为什么、要遵守哪些决策
+      （用 query_decisions 查相关历史后，把该遵守的约束一并写进 brief；用户的原话也如实带上）。
+      graph 只执行、不查历史，所以约束靠你查好、组装进来。如"按用户要求把工作经历精简为
+      成果导向；遵守已定决策『不单独开项目经历栏，并进工作经历』"。
     - target_role（可选）：用户明确说过的目标岗位（如"我想投后端"）；**没明确说过就留空**，
       留空 = 通用版。不要替用户编造岗位——用户没提过就别传，靠聊出来的目标岗位 fact 兜底。
     工具返回：草稿已就绪，提示用户去左侧预览确认；或说明缺事实/没有简历无法出稿。
     """
+    blocked = await execution_proposal.check("generate")
+    if blocked is not None:
+        return blocked
     request = request.strip() or "生成一版简历"
     target_role_clean: str | None = target_role.strip() or None
     try:
@@ -277,37 +301,123 @@ async def generate_resume_tool(
         return f"出不了稿：{e.message}"
     except EmptyOutputError as e:
         return f"出稿失败：{e.message}"
+    execution_proposal.clear()  # 只在真出成稿后消费提案——失败时留着，用户不必重复点头
     return "已出一版简历草稿（暂存预览态，未保存）。请用户看左侧预览：确认就保存为新版本，不满意可「带意见重改」或继续说要求。"
 
 
-@tool("record_resume_rule")
-async def record_resume_rule_tool(scope: str, content: str) -> str:
-    """记一条**跨版本**的改简历长期规则（custom 偏好）——以后每一版生成/改写都遵守。
+@tool("record_change")
+async def record_change_tool(
+    reason: str,
+    changes: list[dict[str, Any]] | None = None,
+) -> str:
+    """落一条「改动记录」：一个原因（为什么）+ 若干改动点（改什么）。
+
+    这是你（聊天 agent）的**决策/工作底稿**手：跟用户敲定的改动、或抓到的改进点，都走这里。
+    **原因先行、子项后补**——只想清楚要改什么（如"优化用词"）但还没梳理出具体改哪，就先只传
+    reason、changes 留空；聊到具体再补子项（用 suggest_improvements 补）。
+
+    每条改动点 dict：`{target, original, suggested}`，可选 `type` / `severity`。
+    - target：定位锚点——写在**当前简历 JSON 里能对上**的位置（如 `work[0].highlights[1]`、`basics.summary`）。
+    - original：原文；suggested：建议改法。
+    - type：quantify / word_choice / structure / fill_gap / job_relevance / highlight。
+    - severity：high / medium / low。
+    （改动点各自的"为什么"归本条 reason，不重复写在子项里。）
+
+    **若这条是一个跨版本的持久决策**（板块归并/全局风格/详略，见 record_decision），用 record_decision。
+    本工具（record_change）用于**本轮整改**——用完即结清。判别与规则全文见 optimize 技能。
+
+    - reason：为什么改（必填）。changes：改动点数组（可空，后补）。
+    返回记录 id，供后续 set_change_status 逐条操作子项。
+    """
+    reason = reason.strip()
+    if not reason:
+        return "reason 为空，未记录任何改动。"
+    rec = await _append_or_create_by_reason(reason, _clean_changes(changes))
+    return f"已落改动记录 #{rec.id}（{reason}），含 {len(rec.changes)} 个改动点，进面板待处理。"
+
+
+@tool("record_decision")
+async def record_decision_tool(
+    reason: str,
+    changes: list[dict[str, Any]] | None = None,
+) -> str:
+    """记一条**跨版本**的改简历长期决策——以后每一版生成/改写都遵守。
 
     仅当用户做了一个**长期、跨版本**的决定时调用，不是一次性微调。典型：
-    - **板块归并**："以后不要项目经历栏，内容并进工作经历"（scope 如 `projects_block`）。
+    - **板块归并**："以后不要项目经历栏，内容并进工作经历"。
       注意：这是把事实归并进别的板块，**不是**屏蔽事实——项目事实仍上简历，只是不单独开栏。
-    - **风格/语言**："语言要精简""成果都要量化、别写流水账"（scope 如 `language_style`）。
-    - **详略/篇幅**："自我评价别写""技能只列核心的"（scope 如 `detail_level`）。
+    - **风格/语言**："语言要精简""成果都要量化、别写流水账"。
+    - **详略/篇幅**："自我评价别写""技能只列核心的"。
 
-    **不要**用本工具记：只针对当前这一版/这一处的改动（如"把腾讯那条改一下"）——
-    那是一次性修改请求，直接走 generate_resume/对话即可，不记长期规则。
+    **不要**用本工具记：只针对当前这一版/这一处的改动（如"把腾讯那条改一下"）——那是一次性
+    修改请求，直接走 generate_resume/对话即可，不记长期决策。
 
-    判别：带「以后/都/每次/一律/别再」等词、说的是一个**类别**（板块/风格）而非单个实例、
-    下一版也该遵守 → 长期规则，记。倾向记、别太克制（同 scope 新规则会顶掉旧的，总量也小）。
+    判别：说的是一个**类别**（板块/风格）而非单个实例、下一版也该遵守 → 长期决策，记。
+    倾向记、别太克制（总量小）。
 
-    **记完必须告知用户**（硬约束）：调完用一句话说记了条长期规则、以后每版都这么来——
-    记错了用户能当场纠正。详见 optimize 技能「跨版本决定」一节。
+    **决策前先 `query_decisions` 查历史**（硬约束）：确认这条不跟以前定过的相悖。
 
-    - scope：规则作用域（短标签，同类用同一标签——如 `projects_block`/`language_style`）。
-      同一 scope 的新规则会**顶掉**旧规则（矛盾时以最新决定为准）。
-    - content：规则内容（一句话说清怎么做）。
+    **记完必须告知用户**（硬约束）：调完用一句话说记了条长期决策、以后每版都这么来——
+    记错了用户能当场纠正。详见 optimize 技能。
+
+    - reason：为什么这么定（必填，带原因）。changes：具体改动点（可空）。
     """
-    scope = scope.strip()
-    content = content.strip()
-    if not scope or not content:
-        return "scope 或 content 为空，未记录任何规则。"
-    return await record_custom_preference(scope, content)
+    reason = reason.strip()
+    if not reason:
+        return "reason 为空，未记录任何决策。"
+    return await record_decision(reason, _clean_changes(changes))
+
+
+def _clean_changes(changes: list[dict[str, Any]] | None) -> list[dict]:
+    """工具入参的改动点清洗：type/severity 走工具边界归一，非法值回默认（不整条丢）。"""
+    return [
+        {
+            "target": str(c.get("target", "")),
+            "original": str(c.get("original", "")),
+            "suggested": str(c.get("suggested", "")),
+            "type": to_suggestion_type(str(c.get("type", "structure"))) or "structure",
+            "severity": to_severity(str(c.get("severity", "medium"))) or "medium",
+        }
+        for c in (changes or [])
+    ]
+
+
+@tool("query_decisions")
+async def query_decisions_tool(keyword: str = "") -> str:
+    """查历史改动记录/决策（原因 + 改动点），**决策或改动前先查**，确认不跟以前相悖。
+
+    - keyword：关键词（如"项目经历""量化""语言"）。留空 = 返回全部活跃记录。
+    返回每条记录的原因 + 子改动点（含各自状态）。查到相关的，就在做决定时尊重它（或明确推翻）。
+    """
+    return await query_decisions(keyword.strip())
+
+
+@tool("set_change_status")
+async def set_change_status_tool(
+    record_id: int,
+    decision: str,
+    change_id: int | None = None,
+) -> str:
+    """改一条改动记录/子项的状态（**操作粒度 = 单条子项**）。
+
+    - change_id 给了 → 只改**那一条改动点**的状态（逐条确认/拒绝）。
+    - change_id 留空 → 改**整条记录**的状态（子项还没列出来时的兜底）。
+
+    decision：
+    - `accept` 接受（→ confirmed）：**高风险**——只有用户给了**确定口吻**才动。
+    - `reject` 拒绝（→ rejected）：**高风险**（版本变更会记"拒掉这一类"）——确定口吻才动。
+    - `discuss` 聊一聊（→ discussing）：**低风险，随便动**。
+    - `retract` 撤回（→ pending）：**低风险，随便动**。
+
+    分级自主度：未定论态之间随便挪；往 confirmed/rejected 定论态走才要确定口吻。
+    """
+    d = decision.strip().lower()
+    if d not in VALID_DECISIONS:
+        return f"未知操作：{decision}（accept/reject/discuss/retract）。"
+    mapped = _DECISION_TO_STATUS[d]
+    if change_id is not None:
+        return await set_change_item_status(record_id, change_id, mapped)
+    return await set_record_status(record_id, mapped)
 
 
 def _format_current(d: Direction) -> str:
@@ -482,10 +592,14 @@ async def calc_timeline_tool(
 TOOLS = [
     record_facts_tool,
     supersede_fact_tool,
+    set_fact_on_resume_tool,
     calc_timeline_tool,
     suggest_improvements_tool,
-    update_suggestion_tool,
-    record_resume_rule_tool,
+    record_change_tool,
+    record_decision_tool,
+    query_decisions_tool,
+    set_change_status_tool,
+    propose_execution_tool,
     apply_suggestions_tool,
     generate_resume_tool,
     refine_direction_tool,

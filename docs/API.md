@@ -43,7 +43,7 @@
   - `version_changed`（2026-08-13）：本轮 agent 是否**写了新版本**——前端据此刷新左栏预览（`loadCurrent` + `loadVersions` + `loadChatHistory`）。**2026-09-09起恒为 false**：出简历草稿（`generate_resume`）与「开始改」（`apply_suggestions`）都是人门挂起态不写库、不置真——确认落库走独立端点 `/resume/generate/confirm`，前端在 confirmGeneration 里刷新。字段保留仅为契约兼容。
   - `pending_disposal_count`（2026-08-25 方向口头化）：agent 落定方向后**待处置的未处理岗位数**——>0 前端就地弹「留/删」确认（清走 `POST /direction/dispose-unprocessed`）；0 = 无待处置。取代旧 `direction_proposal` 方向卡。
   - `direction_changed`（2026-08-30 方向跨页同步）：本轮 agent 是否**落定了方向**（`commit_direction` 工具写回 facts 后）——true 时前端刷新 `directionStore`（`useDirectionStore.load()`），让投递页检索控制台标签（关键词组数 · 城市）跨页/最小化也能同步到最新方向。
-  - **2026-08-25（§12.6 D8）**：`proposal` 字段删除——提议卡 + `propose_suggestion` 工具废除，建议操作统一走 `update_suggestion` 工具 + 面板。
+  - **2026-08-25（§12.6 D8）**：`proposal` 字段删除——提议卡 + `propose_suggestion` 工具废除，优化点操作统一走 agent 工具 + 面板（2026-09-23 起为 `set_change_status`）。
   - **2026-09-09**：`conflict` 字段删除——冲突卡废除，事实真伪冲突改为**对话内反问**：`record_facts` 返回 `conflicts`，agent 在聊天里问用户「你之前说过 X，以新的为准吗？」，用户拍板后调 `supersede_fact` 工具落定（旧 superseded 留 history、新写入 active）。`POST /facts/conflict/resolve` 端点一并删除。
 - 响应 `404`：session_id 不是当前会话（历史只读会话不可续聊）。
 - 响应 `503`：LLM 调用失败（模型连不上/超时/无 key）——契约 body `code=llm_unavailable`，前端显示真因 + 给「去设置」出路。
@@ -91,66 +91,54 @@
 - 请求体 `SessionCreate`：`{ "document_id": 4 }`（可省略 = 种子会话）。
 - 响应 `201`：`{ "id": 5, "document_id": 4, "created_at": "..." }`。
 
-### 优化建议（1.2，前缀 `/api/v1`）
-> 2026-08-10 落库升级：建议组落库 + 三栏面板（待定/已确认/正在聊）+ 聊一聊/裁决。见 resume.md §12。
+### 优化点（1.2，前缀 `/api/v1`）
+> **2026-09-23 一张表**：优化点 = **改动记录**（`change_records`）——`reason`（为什么，主体）+ `changes`（改什么，复合子项，各自带 status）。取代旧的扁平建议流（`optimization_pending`，已停用）。
+> 面板读 `/optimization/records`，**逐条子项**改状态走 `/optimization/record/status`。旧的 `/pending`、`/accept`、`/reject`、`/discuss`、`/retract`、`/update` 六个端点随旧表停用一并删除。
 
-#### `GET /api/v1/optimization/pending`
-读建议面板四栏（右上角「优化点」四栏面板展开时拉取）。
-- 响应 `200` `PendingSuggestionsResponse`：
+#### `GET /api/v1/optimization/records`
+读活跃改动记录（优化点面板展开时拉取；`kind` 可选过滤 `change`/`decision`）。
+- 响应 `200` `ChangeRecordListResponse`：
   ```json
   {
-    "pending": [ { "id", "type", "target", "original", "suggested", "reason", "severity", "status", "split_from", "resolved_in_document_id" } ],
-    "confirmed": [ ... ],
-    "discussing": [ ... ],
-    "rejected": [ ... ]
+    "records": [
+      {
+        "id": 7,
+        "reason": "成果要量化",
+        "changes": [
+          { "id": 1, "target": "工作经历>腾讯>第2条", "original": "负责维护系统",
+            "suggested": "优化性能40%", "status": "pending", "type": "quantify", "severity": "high" }
+        ],
+        "status": "pending", "kind": "change", "origin": "agent",
+        "document_id": 3, "resolved_in_document_id": null, "updated_at": "2026-09-23T..."
+      }
+    ]
   }
   ```
-  - `pending` 左栏待定；`confirmed` 右栏已确认（「开始改」应用这批）；`discussing` 右栏正在聊；`rejected` 右栏已拒绝（**版本内可撤回**，2026-08-12）。
-  - `split_from`：本条由哪条建议拆分而来（可空，null = 非拆分产生）。
-  - `resolved_in_document_id`（2026-08-20）：本条在哪个文档版本被应用/结清（软标记，可空，null = 未结清）。
-  - `origin`（2026-09-14）：来源——`agent`（聊天 agent 提的）/ `job_analysis`（投递页分析产的处方）。
-  - `status` 新增 **`proposed`**（2026-09-14，apply.md §11.7.3）：投递页分析产的「处方」初始态——
-    **不进本面板四栏**（四栏只见 pending/confirmed/discussing/rejected）。点「改进」转 `pending` 后才进。
-  - `updated_at`（2026-09-14）：状态最近变更时间——注入聊天 agent 时据它标「← 你刚改的」行。
+  - `reason`：为什么改（记录主体，一个原因一行）。
+  - `changes[]`：改什么（子项，**可空**——原因先行、子项后补）；子项自带 `status`（**操作粒度 = 单条子项**）与 `type`/`severity`（面板卡片标签）。
+  - `kind`：`change` 本轮整改 / `decision` 跨版本持续决策。
+  - `status`（记录级）仅兜底；面板分栏按**子项** `status` 判：`pending` 待定 / `confirmed` 已确认 / `discussing` 正在聊 / `rejected` 已拒绝（版本内可撤回）。终态 `applied`/`archived` 不返回（已结清）。
+  - `origin`：`agent`（聊天 agent 提的）/ `job_analysis`（投递页分析产的处方）。
+  - **面板只展示带子项的记录**：`kind=decision` 且 `changes` 为空的是纯跨版本约束，不进面板。
+
+#### `POST /api/v1/optimization/record/status`
+改一条改动记录/子项的状态（面板四栏互转的唯一写口）。
+- 请求体 `ChangeStatusRequest`：`{ "record_id": 7, "change_id": 1, "status": "confirmed" }`。
+  - `change_id` 给了就改**那一条子项**；省略则改整条记录（子项还没列出时的兜底）。
+  - `status`：`confirmed` 接受 / `rejected` 拒绝 / `discussing` 聊一聊 / `pending` 撤回（回到待定）。
+- 响应 `200` `OptimizationDecideResponse`：`{ "result": "改动点 #7.1 已标为 confirmed。" }`。
+- `409`：文档任务（生成/改写/回滚/重置）执行中——撞锁，稍后再操作。
 
 #### `POST /api/v1/optimization/promote`
-收录一条处方进优化点面板（**proposed → pending**）——投递页分析面板的「改进」按钮（apply.md §11.7.7）。
-- 请求体 `SuggestionAcceptRequest`：`{ "suggestion_id": 31 }`。
-- 响应 `200`：`{ "pending_id": 31 }`；`404`：建议不存在或不是 proposed（已收录/已定论的再点无效）。
-- 到这一步面板就多了一行，而面板**本就每轮注入聊天 agent**——这既是"收录"也是"交给 agent"，
-  不需要额外通知机制。之后去简历页跟 agent 聊、拍板改简历。
+收录一条投递页处方进优化点——投递页分析面板的「改进」按钮（apply.md §11.7.7）。
+- 请求体 `PromotionRequest`：`{ "suggestion_id": 31 }`（旧处方行 id，来自分析报告的 `suggestions`）。
+- 行为：**落一条改动记录**（`origin=job_analysis`，子项直接 `confirmed`——点「改进」= 用户已认可），
+  并把旧处方行软结清（`archived`，留溯源）。不再改旧行的状态。
+- 响应 `200` `OptimizationDecideResponse`：`{ "result": "处方已收录为改动记录 #12。" }`；
+  `404`：处方不存在或不是待收录状态（已收录的再点无效）。
+- 到这一步面板就多了一行，而面板**本就每轮注入聊天 agent**——这既是"收录"也是"交给 agent"。
 
-#### `POST /api/v1/optimization/accept`
-确认一条建议（pending/discussing → confirmed）。**去重**：已 confirmed/rejected 的拒绝再接受（返回 404）。
-- 请求体 `SuggestionAcceptRequest`：`{ "suggestion_id": 5 }`。
-- 响应 `200`：`{ "pending_id": 5 }`；`404`：建议不存在或已定论。
-
-#### `POST /api/v1/optimization/reject`
-拒绝一条建议（pending/discussing → rejected，进灰栏版本内可撤回）。**不即时记偏好**——偏好延迟到版本变更清空 rejected 时按最终结果记（2026-08-12）。
-- 请求体 `SuggestionRejectRequest`：`{ "suggestion_id": 5, "reason": "后端成就不可量化" }`。
-- 响应 `204`。
-
-#### `POST /api/v1/optimization/retract`
-撤回一条已定论建议（confirmed/discussing/rejected → pending，2026-08-12 新增）。右三栏每条「撤回」——已确认（改前可撤回）、正在聊、已拒绝（版本内拉回）都能回到待定。
-- 请求体 `SuggestionRetractRequest`：`{ "suggestion_id": 5 }`。
-- 响应 `204`。
-
-#### `POST /api/v1/optimization/discuss`
-聊一聊：pending → discussing（面板右栏「正在聊」区，用户去聊天框提问）。
-- 请求体 `SuggestionDiscussRequest`：`{ "suggestion_id": 5 }`。
-- 响应 `204`。
-
-#### `POST /api/v1/optimization/update`
-更新一条建议（agent `update_suggestion` 工具执行，2026-08-25 起开放全状态操作，§12.6 优化点操作权）。
-- 请求体 `OptimizationDecideRequest`：
-  ```json
-  { "suggestion_id": 5, "decision": "accept" }
-  ```
-  - `decision`：`accept`（→confirmed）/ `reject`（→rejected）/ `discuss`（→discussing）/ `retract`（→pending）/ `refine`（`refined` 传新内容 → 回 pending）/ `split`（`split_to` 传拆分出的新建议 → 原条回 pending + 新条 pending+`split_from`）。
-  - **2026-08-25（§12.6 D1）**：状态守卫放宽——只要建议还活跃（`resolved_in_document_id IS NULL`）即可操作，不再要求先点「聊一聊」；用户在聊天里的口头表态（"第 2 条接受"）由 agent 直接执行。终态（applied/archived）不可操作。
-- 响应 `200` `OptimizationDecideResponse`：`{ "result": "建议 #5 已确认（将应用于下次改写）。" }`（给 agent 的可读反馈）。
-
-> **2026-08-25（§12.6 D8）**：`POST /optimization/decide` 改名 `POST /optimization/update`；`POST /optimization/proposal/confirm`、`POST /optimization/proposal/dismiss` 删除（提议卡 + `propose_suggestion` 工具废除）。
+> **2026-08-25（§12.6 D8）**：`POST /optimization/decide` 改名 `POST /optimization/update`；`POST /optimization/proposal/confirm`、`POST /optimization/proposal/dismiss` 删除（提议卡 + `propose_suggestion` 工具废除）。`/optimization/update` 已在 2026-09-23 随旧表停用删除。
 > **2026-09-09**：`POST /optimization/apply` 删除——「开始改」折进统一简历图（见下「简历生成」），走 `POST /resume/generate` 的 `apply_confirmed=true`。
 
 ### 简历生成（1.3，前缀 `/api/v1`）
@@ -256,7 +244,7 @@
 - 响应 `404`：还没有简历文档（无法重抽）。
 
 #### `POST /api/v1/documents/save`
-存一版生成/修改的简历文档（LLM 组合产出），顺带打一份事实快照（与版本同代）。
+存一版生成/修改的简历文档（LLM 组合产出），顺带给新稿打一份**工作台快照**（该版开始时的工作台：资料集 + 改动记录，与版本同代）。
 - 请求体 `ResumeDocumentCreate`：`{ "markdown": "...", "html": "", "source": "generated" }`（`source` ∈ `upload|generated|rollback`；`html` = 排版层产物，可空）。
 - 响应 `200` `ResumeDocument`：`{ "id", "version", "markdown", "html", "summary", "source", "created_at" }`。
 
@@ -284,12 +272,14 @@
 - 响应 `409`：上传原件（无 `resume_json`，无法重渲染）——前端已置灰控件，这是双保险。
 
 #### `POST /api/v1/documents/rollback`
-回滚到目标稿（2026-08-10 软作废回滚；**2026-08-12 A3 身份锚定**）：按 **document_id**（id 唯一身份、永不复用），不按 version——version 是显示标签（软作废后可复用，同号一作废一当前两条），按 version 会撞错稿。目标稿之后所有稿标 `superseded`（**数据全保留**，UI 不显示），目标稿变当前，下一个版本 = 目标稿号+1（稿号连续不跳）。回滚前给被替换的当前稿打快照；**回滚后开新 session**（版本变更，绑定目标稿 id，resume.md §11.1）；**版本变更统一结清**（保留 discussing、清空 pending/confirmed/rejected、清 rejected 时延迟记最终偏好，§12.3 决策四修订——前端回滚前应提示用户未定论建议的去留）。
-- 请求体 `RollbackRequest`：`{ "document_id": 1, "include_facts": false }`。
+回滚到目标稿（2026-08-10 软作废回滚；**2026-08-12 A3 身份锚定**）：按 **document_id**（id 唯一身份、永不复用），不按 version——version 是显示标签（软作废后可复用，同号一作废一当前两条），按 version 会撞错稿。目标稿之后所有稿标 `superseded`（**数据全保留**，UI 不显示），目标稿变当前，下一个版本 = 目标稿号+1（稿号连续不跳）。
+**2026-09-24 回滚语义改判**：回滚 = **整份恢复目标版开始时的工作台**（资料集 + 改动记录），**直回不叠加**——不是"撤销目标版之后的变化"，而是直接换成那一刻的那一份。回滚后开新 session（版本变更，绑定目标稿 id，resume.md §11.1）；开场引导会说清「从哪退到哪 + 放弃了哪些变化」。
+- 请求体 `RollbackRequest`：`{ "document_id": 1 }`。
   - `document_id`：目标文档 id（唯一身份；前端版本面板每行带 `id`）。
-  - `include_facts=true` 时，用目标稿那代的事实快照覆盖当前 active 事实（旧的标 superseded 留 history）；快照里每条事实的 `source` 原样还原。
-- 响应 `200` `RollbackResponse`：`{ "version": 1, "facts_restored": false }`（`version` = 目标稿号，显示用）；`404` 目标稿不存在。
-- `409` 用于「回滚目标 = 当前文档」时（回滚到当下无意义，避免生成重复行）。
+  - ~~`include_facts`~~ **已删**：工作台恢复是整份的，没有"只回文档不回工作台"这个半吊子选项。
+- 响应 `200` `RollbackResponse`：`{ "version": 2, "workspace_restored": true }`（`version` = 目标稿号，显示用；`workspace_restored` = 是否做了整份恢复）；`404` 目标稿不存在。
+  - **响应很快（2026-09-24）**：文档/工作台/session/事件同步完成，**开场引导生成已挪后台**（`schedule_opening`，不再拖住响应）——引导稍晚落库为新 session 的第一条助手消息，前端短轮询带回。回滚**本身全程原子、不可暂停**（停到"文档已作废、工作台恢复一半"比慢更糟）。
+- `409` 两种：①「回滚目标 = 当前文档」（回滚到当下无意义）；②**回滚到最早一版**——v1 的快照是空的，恢复等于清空工作台，那是「重置」（`POST /documents/reset`）不是「回滚」。
 
 #### `POST /api/v1/documents/reset`
 重置简历：清空文档流 + 快照（回到空态，可重传新 v1）；`clear_facts` 连事实库一起清空。**待执行建议无条件清空**（版本没了建议脱锚，与回滚一致，§12.3 决策四）。
@@ -538,8 +528,9 @@
     坏块（kind 不认得 / chart 配错）单独丢、text 照显。**兼容旧缓存**：无 `blocks` 只有 `body` 时折成单个 text 块。
   - `meta`：统计口径——`total` 本批岗位数 / `liepin`·`job51` 来源分布 / `with_jd` 有 JD 数
     （前端据此标注"深度分析（有 JD）vs 概览（无 JD）"，不让用户以为覆盖不全都一样深）。
-  - `suggestions`：**处方**（`status=proposed`、`origin=job_analysis`）——**不进优化点面板四栏**，
-    点「改进」才转 `pending`（`POST /optimization/promote`）→ 面板本就每轮注入聊天 agent → 去简历页拍板。
+  - `suggestions`：**待收录的处方**（`origin=job_analysis`、子项仍 `pending` 的改动记录）——**不进优化点面板**
+    （面板只读带子项的记录；这些子项还没被用户认可），点「改进」走 `POST /optimization/promote`
+    收录成一条改动记录（子项直接 `confirmed`）→ 面板本就每轮注入聊天 agent → 去简历页拍板。
   - **2026-09-15 graph 化**：batch 走 `graphs/analysis.py`（load → prepare → compute_stats → analyze →
     persist），analyze 用带工具位的 Agent（详见 apply.md §11.7.6）。两种数据源两种分析法不变：猎聘
     （无 JD、结构化标签）代码聚合；前程无忧（有 JD）逐岗读 JD 提炼（留在 service prepare 阶段）。

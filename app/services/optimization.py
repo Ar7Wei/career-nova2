@@ -1,15 +1,18 @@
-"""optimization service：1.2 优化建议流的编排。
+"""optimization service：优化点（1.2）的编排。
 
-2026-08-10 落库升级（建议组从聊天暂存 → 落库对象，带状态机）：
-- suggest：suggest_improvements 工具产出 → 落库 pending（面板左栏）。
-- accept：pending → confirmed（去重：已 confirmed/rejected/discussing 不再接受）。
-- reject：pending → rejected + 记偏好"拒掉这一类"。
-- 聊一聊：pending → discussing（面板右栏「正在聊」）；裁决（decide_suggestion）
-  从 discussing 定论：accept→confirmed / reject→rejected / refine→内容更新回 pending。
-- apply（"开始改"，2026-09-09 ADR 0015）：**不再在本 service**——折进统一简历图
-  （services/rewrite.generate_preview(apply_confirmed=True) 读 confirmed 渲染成文本进图），
-  人门确认后由 generate_confirm 调 clear_settled_for_new_version 结清。本 service 只留
-  建议状态机（suggest/accept/reject/discuss/retract/refine/split）+ 结清 + 偏好。
+**2026-09-23 一张表**：优化点 = 改动记录（`change_records`），`reason`（为什么）+ `changes`
+（改什么，复合子项，各自带 status）。取代旧的扁平 `optimization_pending`（建议逐条一行）
+与 `preferences(kind=custom)`（自定义标准）——「优化点和改进记录本就是一回事」。
+
+- 落库：聊天 agent（`record_change` / `suggest_improvements`）→ pending（面板待定）；
+  投递页分析产的处方 → 同样落这里（origin=job_analysis），点「改进」收录（`promote_suggestion`）。
+- 操作粒度 = **单条子项**：`set_change_item_status(record_id, change_id, status)` 逐条定论；
+  记录级 `set_record_status` 只在子项全空或整条存废时用。
+- 跨版本决策：`kind=decision` 的记录每版注入生成/改写 prompt（`build_decisions_text`）；
+  `kind=change` 是本轮整改，版本变更时结清（`clear_settled_for_new_version`）。
+- apply（「开始改」，ADR 0015）：不在本 service——折进统一简历图
+  （`services/rewrite.generate_preview(apply_confirmed=True)` 读**已确认子项**渲染成文本进图），
+  人门确认后由 `generate_confirm` 调 `clear_settled_for_new_version` 结清。
 """
 
 from datetime import UTC, datetime
@@ -18,25 +21,29 @@ from app.core.errors import ConflictError
 from app.core.logging import logger
 from app.repositories.documents import latest_document
 from app.repositories.optimization import (
-    add_custom_preference,
-    add_preference,
-    add_suggestion,
+    add_change_record,
+    append_change_items,
+    clear_all_change_records as _clear_all_change_records,
+    get_change_record,
     get_suggestion,
-    list_preferences,
-    list_suggestions,
-    set_split_from,
+    list_change_records,
+    query_change_records,
     soft_settle_by_status,
-    update_suggestion_content,
-    update_suggestion_status,
+    soft_settle_change_records,
+    update_change_item_status,
+    update_record_status,
 )
-from app.schemas.optimization import (
-    PendingSuggestion,
-    PendingSuggestionsResponse,
-    Suggestion,
-    SuggestionDecision,
-)
+from app.schemas.optimization import ChangeRecord
 from app.services.documents import document_is_busy
 from app.services.sessions import current_session
+
+# 面板/agent 的决策动词 → 子项（或记录）状态。accept/reject 进定论态，discuss/retract 在未定论态之间。
+_DECISION_TO_STATUS = {
+    "accept": "confirmed",
+    "reject": "rejected",
+    "discuss": "discussing",
+    "retract": "pending",
+}
 
 
 def _parse_iso(s: str) -> datetime:
@@ -55,90 +62,104 @@ def _as_utc(v: datetime | str | None) -> datetime | None:
 
 
 def _ensure_not_applying() -> None:
-    """文档任务（apply/改写/生成/修复/回滚/重置）执行中，禁止改动建议状态。
+    """文档任务（apply/改写/生成/修复/回滚/重置）执行中，禁止改动优化点状态。
 
-    文档任务会「版本变更统一结清」清建议——期间新确认的建议会被清了又没进快照
+    文档任务会「版本变更统一结清」清改动记录——期间新确认的会清了又没进快照
     （改了没改、清了没清）。本守卫由用户 HTTP 入口调用（撞锁抛 409）；
-    agent 工具（decide/propose）不走这里，返回字符串让 agent 转述（见各自实现）。
+    agent 工具（set_change_status / record_change）不走这里，返回字符串让 agent 转述。
     """
     if document_is_busy():
-        raise ConflictError("正在处理文档任务，请稍候再操作建议")
+        raise ConflictError("正在处理文档任务，请稍候再操作优化点")
 
 
-def render_panel(
-    panel: PendingSuggestionsResponse,
-    *,
-    changed_since: datetime | str | None = None,
-) -> str:
-    """把面板四栏渲染成注入文本，附变化标记 + 两道门控（积压刹车 / 开始改时机）。
+async def render_records_panel(*, changed_since: datetime | str | None = None) -> str:
+    """把改动记录渲染成注入文本（供聊天 agent 每轮看工作底稿）。
 
-    抽到本 service（2026-09-09）：建议面板是 optimization 的领域，渲染函数本就该住
-    这里——deep agent 的 build_deep_system_prompt 复用它，不反向依赖别处。
+    每条：`#{id}（kind）reason` + 缩进的子改动点 `- [status] target: original → suggested`。
+    变化标记（← 你刚改的）：updated_at > changed_since（本轮开跑前记的时间点快照）。
 
-    - 四栏：待定 / 正在聊 / 已确认 / 已拒绝（2026-08-25 补已拒绝，§12.6 D6 闸一）。
-    - **变化标记（§12.6 D10 档1，2026-09-14 落地）**：`changed_since` = 本轮 agent 开跑前
-      的时间点快照；`updated_at > changed_since` 的行标「← 你刚改的」。避免 agent 把自己
-      刚做的动作（或用户在面板上的点击）误当"一开始就在这儿"。旧实现用两份面板对象逐行
-      比状态，但 `build_deep_system_prompt` 每轮现读面板、从来没传过 initial_panel——
-      死代码。改为传时间戳：一行一个快照，调用方只需在开跑前记一次 `datetime.now(UTC)`。
-    - 门控（§12.6 D6 闸二 / D9）：待定积压 >5 提示停提新 + 催办；待定清零且 confirmed
-      非空提示「可以开改」。
+    **决策不随版本结清而消失（2026-09-23）**：`kind=decision` 是跨版本约束，结清标它
+    `archived` 只是记账（「这条在哪版兑现过」），**约束本身依然成立**——所以这里连同
+    已结清的决策一起注入（标「已兑现·持续生效」）。只取活跃记录会让 agent 把结清误读成
+    「这个决定作废了」，进而放任后续版本回退它（2026-09-23 v6 技能块回归的放大器）。
+    本轮整改（kind=change）结清即随版本出清，不在此列。
     """
     changed_since_dt = _as_utc(changed_since)
-
-    def was_changed(s: PendingSuggestion) -> bool:
-        if changed_since_dt is None or not s.updated_at:
-            return False
-        try:
-            at = _parse_iso(s.updated_at)
-        except ValueError:
-            return False
-        return at > changed_since_dt
-
-    def row(s: PendingSuggestion, *, show_suggested_only: bool = False) -> str:
-        body = s.suggested if show_suggested_only else f"{s.original} → {s.suggested}"
-        mark = f"  ← 你刚改成了「{s.status}」" if was_changed(s) else ""
-        return f"  #{s.id} [{s.type}] {s.target}: {body}{mark}"
-
-    panel_lines: list[str] = []
-    if panel.pending:
-        panel_lines.append("【待定】")
-        panel_lines.extend(row(s) for s in panel.pending)
-    if panel.discussing:
-        panel_lines.append("【正在聊】")
-        panel_lines.extend(row(s) for s in panel.discussing)
-    if panel.confirmed:
-        panel_lines.append("【已确认】")
-        panel_lines.extend(row(s, show_suggested_only=True) for s in panel.confirmed)
-    if panel.rejected:
-        panel_lines.append("【已拒绝】")
-        panel_lines.extend(row(s) for s in panel.rejected)
-    if not panel_lines:
-        panel_lines.append("（暂无建议）")
-
-    # 门控（§12.6 D6 闸二）：待定积压超阈值 → 停提新、改为催办。
-    if len(panel.pending) > 5:
-        panel_lines.append(
-            f"\n【待定积压 {len(panel.pending)} 条】暂停提新建议——先逐条念给用户、"
-            "用 update_suggestion 帮 ta 把待定清空，再继续优化。"
-        )
-    # 门控（§12.6 D9）：待定清零且 confirmed 非空 → 开始改时机到。同一门控状态只提议一次。
-    if not panel.pending and panel.confirmed:
-        panel_lines.append(
-            f"\n【开始改时机】已确认 {len(panel.confirmed)} 条、待定已清零——可提议用户开一轮改"
-            "（apply_suggestions）；若已确认只有 1~2 条，建议先攒攒。"
-        )
-    return "\n".join(panel_lines)
+    records = await list_change_records(active_only=True)
+    standing = [r for r in await list_change_records(kind="decision") if r.id not in {x.id for x in records}]
+    if not records and not standing:
+        return "（暂无改动记录）"
+    lines: list[str] = []
+    for r in records + standing:
+        mark = ""
+        if changed_since_dt is not None and r.updated_at:
+            try:
+                if _parse_iso(r.updated_at) > changed_since_dt:
+                    mark = "  ← 你刚改的"
+            except ValueError:
+                pass
+        kind_tag = "决策" if r.kind == "decision" else "整改"
+        status_tag = "·已兑现·持续生效" if r.kind == "decision" and r.status != "pending" else ""
+        lines.append(f"#{r.id} 【{kind_tag}·{r.status}{status_tag}】{r.reason}{mark}")
+        for c in r.changes:
+            lines.append(f"  - [{c.status}] {c.target}: {c.original} → {c.suggested}")
+    return "\n".join(lines)
 
 
-async def record_suggestion(
-    s: Suggestion, *, status: str = "pending", origin: str = "agent", document_id: int | None = None
-) -> PendingSuggestion:
-    """落库一条建议：聊天 agent 提的 → pending（面板待定）；投递页分析产的处方 → proposed。
+async def query_decisions(keyword: str = "") -> str:
+    """查历史改动记录（原因 + 改动点），格式化成 agent 可读文本。
 
-    status/origin（2026-09-14，apply.md §11.7.3）：处方走 proposed + origin=job_analysis
-    （不进面板四栏，点「改进」才转 pending）；agent 工具走默认 pending + origin=agent。
-    document_id：处方基于「当前简历」——显式传入可避免与 latest_document 竞态，不传则读最新稿。
+    keyword 非空 → LIKE 过滤 reason/changes；空 → 返回全部活跃记录。
+    供 agent 决策前查历史（避免与已定决策相悖）。
+    """
+    records = await query_change_records(keyword) if keyword else await list_change_records()
+    if not records:
+        return "（没有相关历史改动记录）"
+    lines: list[str] = []
+    for r in records:
+        head = f"#{r.id}（{r.kind}）{r.reason}"
+        lines.append(head)
+        for c in r.changes:
+            lines.append(f"  - [{c.status}] {c.target}: {c.original} → {c.suggested}")
+    return "\n".join(lines)
+
+
+async def build_decisions_text() -> str:
+    """把「持续生效的决策记录」（kind=decision）渲染成注入文本，喂生成/改写 prompt 的 {preferences}。
+
+    只取活跃（未结清）的 decision——它们是跨版本约束（如"不要项目经历栏，并进工作经历"）。
+    """
+    records = await list_change_records(kind="decision", active_only=True)
+    if not records:
+        return ""
+    return "\n".join(f"- {r.reason}" for r in records)
+
+
+async def record_decision(reason: str, changes: list[dict] | None = None) -> str:
+    """记一条跨版本决策记录（kind=decision），每版注入生成/改写 prompt。返回确认文案。
+
+    reason 必填（为什么）；changes 可空（原因先行、子项后补）或带具体改动点。
+    """
+    reason = reason.strip()
+    if not reason:
+        return "reason 为空，未记录任何决策。"
+    rec = await record_change(reason, changes or [], kind="decision")
+    logger.info("decision_recorded", record_id=rec.id)
+    return f"已记下这条长期决策（#{rec.id}）：{reason}——以后每一版都会遵守。"
+
+
+async def record_change(
+    reason: str,
+    changes: list[dict] | None = None,
+    *,
+    kind: str = "change",
+    origin: str = "agent",
+    status: str = "pending",
+    document_id: int | None = None,
+) -> ChangeRecord:
+    """落库一条改动记录（原因 + 子项）：聊天 agent 提的 → pending；投递页处方 → job_analysis。
+
+    document_id 不给则读当前最新稿（避免与 latest_document 竞态可显式传）。
     """
     sess = await current_session()
     session_id = sess.id if sess is not None else 0
@@ -146,11 +167,80 @@ async def record_suggestion(
     if doc_id is None:
         doc = await latest_document()
         doc_id = doc.id if doc is not None else 0
-    return await add_suggestion(session_id, doc_id, s, status=status, origin=origin)
+    return await add_change_record(
+        reason=reason, changes=changes, session_id=session_id, document_id=doc_id,
+        status=status, kind=kind, origin=origin,
+    )
 
 
-async def promote_suggestion(suggestion_id: int) -> PendingSuggestion | None:
-    """收录一条处方进优化点面板：「改进」按钮 → proposed → pending（apply.md §11.7.7）。
+async def _append_or_create_by_reason(reason: str, changes: list[dict]) -> ChangeRecord:
+    """同原因不新开行：已有一条**活跃的 change 记录**用同一 reason 就 append 子项，否则新建。
+
+    兑现工具契约里「同原因的新改动 append 进同一条、不重复抄原因」。只在 kind=change
+    的活跃记录里找——decision 是跨版本约束，不与本轮整改混。
+
+    原因先行时 changes 可为空：这一支会新建一条 reason 挂着的空记录，后续再 append。
+    """
+    reason = reason.strip()
+    for r in await list_change_records(kind="change", active_only=True):
+        if r.reason.strip() == reason and r.id is not None:
+            updated = await append_change_items(r.id, changes) if changes else r
+            return updated or r
+    return await record_change(reason, changes, kind="change")
+
+
+async def set_change_item_status(record_id: int, change_id: int, status: str) -> str:
+    """子项级状态迁移（操作粒度 = 单条子项）。返回可读结果。
+
+    文档任务执行中的处理分两条路（沿用 2026-08-25 的分工）：
+    - **用户入口**（面板 URL）撞锁要抛 409——由路由层先调 `_ensure_not_applying()`。
+    - **agent 工具**路径不抛，返回可读反馈让 agent 转述（工具层是这么调的）。
+    本函数走后者（不抛）；抛的那条由路由层的 guard 负责（见 `app/api/v1/optimization.py`）。
+    """
+    ok = await update_change_item_status(record_id, change_id, status)
+    if not ok:
+        return f"改动记录 #{record_id} 的子项 #{change_id} 不存在。"
+    return f"改动点 #{record_id}.{change_id} 已标为 {status}。"
+
+
+async def set_record_status(record_id: int, status: str) -> str:
+    """记录级状态迁移（子项全空时用、或整条存废）。返回可读结果。"""
+    rec = await get_change_record(record_id)
+    if rec is None:
+        return f"改动记录 #{record_id} 不存在。"
+    await update_record_status(record_id, status)
+    return f"改动记录 #{record_id} 已标为 {status}。"
+
+
+async def pending_records(*, origin: str | None = None) -> list[ChangeRecord]:
+    """读当前活跃（未结清）的改动记录，供面板/渲染。origin 可选过滤（agent/job_analysis）。"""
+    return await list_change_records(origin=origin, active_only=True)
+
+
+async def count_open_records() -> int:
+    """未定论改动记录数（有 pending/discussing 子项的记录）——供 chat 响应。
+
+    子项级口径：一条记录里只要还有待定/在聊的子项就算「未定论」（与面板待定栏一致）。
+    无子项的记录不算（那是还没落地的决策，不是"待处理条目"）。
+    """
+    records = await list_change_records(active_only=True)
+    return sum(
+        1
+        for r in records
+        if any(c.status in ("pending", "discussing") for c in r.changes)
+    )
+
+
+async def clear_all_change_records() -> int:
+    """核爆：清空全部改动记录。"""
+    return await _clear_all_change_records()
+
+
+async def promote_suggestion(suggestion_id: int) -> ChangeRecord | None:
+    """投递页处方「改进」：把一条 proposed 处方收录成一条改动记录，原行结清。
+
+    2026-09-23 起处方并入 change_records——面板只读新表，故这里落新记录、把旧行软标
+    archived（记 resolved_in_document_id 留溯源），而不是旧实现的 proposed → pending。
 
     仅 proposed 可收录（已被 agent/用户操作过的不再重复收录）。到这一步面板就多了一行——
     而面板**本就每轮注入**聊天 agent（`_assembly.py`），故这既是"收录"也是"交给 agent"。
@@ -159,239 +249,74 @@ async def promote_suggestion(suggestion_id: int) -> PendingSuggestion | None:
     if row is None or row.status != "proposed":
         return None
     _ensure_not_applying()
-    await update_suggestion_status(suggestion_id, "pending")
-    return PendingSuggestion(
-        id=suggestion_id,
-        type=row.type,  # type: ignore[arg-type]
-        target=row.target,
-        original=row.original,
-        suggested=row.suggested,
-        reason=row.reason,
-        severity=row.severity,  # type: ignore[arg-type]
-        status="pending",
-        origin=row.origin,  # type: ignore[arg-type]
+    # 收录进新表：旧行一条 = 新记录的一个子项（reason 沿用处方的理由，缺失给通用标题）。
+    rec = await record_change(
+        row.reason.strip() or "投递页分析处方",
+        [
+            {
+                "target": row.target,
+                "original": row.original,
+                "suggested": row.suggested,
+                "status": "confirmed",  # 「改进」= 用户已认可这条处方 → 直接进已确认栏，可「开始改」
+                "type": row.type,
+                "severity": row.severity,
+            }
+        ],
+        origin="job_analysis",
+        document_id=row.document_id,
     )
+    # 旧行软结清（不删，留溯源）。discard=False：它被收录进新记录，不算被丢弃。
+    await soft_settle_by_status({"proposed"}, row.document_id or rec.document_id, ids={suggestion_id})
+    logger.info("prescription_promoted", suggestion_id=suggestion_id, record_id=rec.id)
+    return rec
 
 
-async def proposed_suggestions(document_id: int | None = None) -> list[PendingSuggestion]:
-    """读「未处理」分析产的处方（status=proposed，投递页分析面板用）。
-
-    document_id 给了就按稿过滤（当前简历）；不给 = 全部 proposed（版本变了就脱锚，
-    结清由版本变更那套逻辑兜底——与其它状态同一条规矩）。
-    """
-    return await list_suggestions(document_id=document_id, status="proposed")
-
-
-async def accept_suggestion(suggestion_id: int) -> PendingSuggestion | None:
-    """确认一条已落库建议：pending/discussing → confirmed。
-
-    2026-08-10 去重：已 confirmed/rejected 的不可再接受（前端三栏语义保证，
-    后端兜底）——旧实现同一条可无限次收录（bug）。
-    """
-    row = await get_suggestion(suggestion_id)
-    if row is None:
-        return None
-    if row.status in ("confirmed", "rejected"):
-        return None  # 已定论，不再接受（去重兜底）
-    _ensure_not_applying()
-    await update_suggestion_status(suggestion_id, "confirmed")
-    return PendingSuggestion(
-        id=suggestion_id,
-        type=row.type,  # type: ignore[arg-type]
-        target=row.target,
-        original=row.original,
-        suggested=row.suggested,
-        reason=row.reason,
-        severity=row.severity,  # type: ignore[arg-type]
-        status="confirmed",
-        origin=row.origin,  # type: ignore[arg-type]
-    )
-
-
-async def start_discuss(suggestion_id: int) -> None:
-    """聊一聊：pending → discussing（面板右栏「正在聊」区）。"""
-    row = await get_suggestion(suggestion_id)
-    if row is None or row.status not in ("pending", "discussing"):
-        return
-    _ensure_not_applying()
-    await update_suggestion_status(suggestion_id, "discussing")
-
-
-async def update_suggestion(
-    suggestion_id: int,
-    decision: SuggestionDecision,
-    refined: Suggestion | None = None,
-    split_to: list[Suggestion] | None = None,
-) -> str:
-    """更新一条建议（agent `update_suggestion` 工具执行，2026-08-25 起开放全状态操作）。
-
-    decision（§12.6 优化点操作权，2026-08-29 分级自主度）：
-    - accept → confirmed（右栏「已确认」）——**高风险**，agent 只在用户给了**确定口吻**才调。
-    - reject → rejected（进灰栏，版本内可撤回；**不即时记偏好**——偏好延迟到
-      版本变更清空 rejected 时按最终结果记，2026-08-12）——**高风险**，确定口吻才调。
-    - refine → 更新内容，回 pending（细化/修改，仍待用户最终确认）
-    - split → 分裂成多条新建议（原条回 pending 保留，新条 pending + split_from）
-    - discuss → discussing（「聊一聊」）——**低风险**，agent 随便动（聊哪条挪哪条）。
-    - retract → pending（「撤回」）——**低风险**，agent 随便动。
-
-    分级自主度（2026-08-29）：待定/正在聊两栏（未定论）之间 agent 随便挪；只有往
-    confirmed/rejected 这两个**定论态**走（要真改进简历 / 记偏好）才要用户确定口吻。
-    这是按"动作风险"分级，不是按"用户有没有下命令"分级。
-
-    状态守卫（2026-08-25 推翻 S4-1/S4-2）：只要建议**还活跃**（resolved_in_document_id
-    为 NULL）就能操作。终态（applied/archived）与已结清的建议不可操作。
-
-    返回给 agent 的可读结果（agent 据此组织聊天话术）。
-    """
-    row = await get_suggestion(suggestion_id)
-    if row is None:
-        return f"建议 #{suggestion_id} 不存在。"
-    # 2026-08-25 放宽守卫：只拦已结清（终态 applied/archived，锚在旧稿上）——
-    # pending/confirmed/rejected/discussing 四态都活跃，agent 都可操作（§12.6）。
-    if row.status in ("applied", "archived"):
-        return f"建议 #{suggestion_id} 已结清（{row.status}），不在当前活跃面板，无法操作。"
-    # 文档任务执行中（agent 工具路径）：返回可读反馈，不抛异常——让 agent 转述给用户
-    if document_is_busy():
-        return "正在处理文档任务，这条建议稍后再操作。"
-
-    if decision == "accept":
-        await update_suggestion_status(suggestion_id, "confirmed")
-        return f"建议 #{suggestion_id} 已确认（将应用于下次改写）。"
-    if decision == "reject":
-        await update_suggestion_status(suggestion_id, "rejected")
-        return f"建议 #{suggestion_id} 已拒绝（进灰栏，本版本内可撤回；偏好将在版本变更时记录）。"
-    if decision == "refine":
-        if refined is None:
-            return f"细化建议 #{suggestion_id} 需要传 refined（新的 suggested/reason/target）。"
-        await update_suggestion_content(suggestion_id, refined)
-        return f"建议 #{suggestion_id} 已细化更新，回到待定（面板左栏）。"
-    if decision == "split":
-        sess = await current_session()
-        session_id = sess.id if sess is not None else 0
-        if not split_to:
-            return f"分裂建议 #{suggestion_id} 需要传 split_to（拆分出的新建议）。"
-        # 原条回 pending（保留），新条 pending + split_from
-        await update_suggestion_status(suggestion_id, "pending")
-        new_ids: list[int] = []
-        for s in split_to:
-            p = await add_suggestion(session_id, row.document_id, s, origin=row.origin)
-            assert p.id is not None
-            await set_split_from(p.id, suggestion_id)
-            new_ids.append(p.id)
-        return f"建议 #{suggestion_id} 已分裂为 {len(new_ids)} 条（#{', '.join(map(str, new_ids))}），原条回到待定。"
-    if decision == "discuss":
-        await update_suggestion_status(suggestion_id, "discussing")
-        return f"建议 #{suggestion_id} 已移入「正在聊」（面板右栏），我们边聊边定。"
-    if decision == "retract":
-        await update_suggestion_status(suggestion_id, "pending")
-        return f"建议 #{suggestion_id} 已撤回，回到待定（面板左栏）。"
-    # 防御：decision 是闭集 Literal，工具边界已拦非法值——到这儿说明集被改成不同步了。
-    raise ValueError(f"未覆盖的 suggestion decision：{decision}")
-
-
-async def reject_suggestion(suggestion_id: int, reason: str) -> None:
-    """拒绝一条已落库建议：pending/discussing → rejected（进灰栏，版本内可撤回）。
-
-    2026-08-12：**不即时记偏好**——偏好延迟到版本变更清空 rejected 时
-    按最终结果记（拒绝可撤回，撤回后不算"这一类"）。
-    2026-09-14：**拒因落库**（此前只 logger.info 丢了）——"能力不到"这类值不再蒸发，
-    它是方向降级的证据来源（apply.md §11.7.8）。
-    """
-    row = await get_suggestion(suggestion_id)
-    if row is None or row.status == "rejected":
-        return
-    _ensure_not_applying()
-    await update_suggestion_status(suggestion_id, "rejected", reject_reason=reason)
-    logger.info("optimization_rejected", suggestion_id=suggestion_id, type=row.type, reason=reason)
-
-
-async def retract_suggestion(suggestion_id: int) -> None:
-    """撤回一条已定论建议（confirmed/discussing/rejected → pending）。
-
-    2026-08-12：右三栏每条「撤回」按钮——已确认（还没开始改，改前可撤回）、
-    正在聊、已拒绝（版本内拉回重新决定）都能回到待定。
-    已 pending / 不存在 → no-op（幂等）。
-    """
-    row = await get_suggestion(suggestion_id)
-    if row is None or row.status == "pending":
-        return
-    _ensure_not_applying()
-    await update_suggestion_status(suggestion_id, "pending")
-    logger.info("optimization_retracted", suggestion_id=suggestion_id, from_status=row.status)
-
-
-async def pending_suggestions() -> PendingSuggestionsResponse:
-    """读建议面板四栏（待定/已确认/正在聊/已拒绝，2026-08-12 加「已拒绝」）。"""
-    all_rows = await list_suggestions(include_rejected=True)
-    pending = [s for s in all_rows if s.status == "pending"]
-    confirmed = [s for s in all_rows if s.status == "confirmed"]
-    discussing = [s for s in all_rows if s.status == "discussing"]
-    rejected = [s for s in all_rows if s.status == "rejected"]
-    return PendingSuggestionsResponse(pending=pending, confirmed=confirmed, discussing=discussing, rejected=rejected)
-
-
-async def count_suggestions() -> int:
-    """读当前未定论建议数（面板 pending 待定 + discussing 正在聊 = 未定论）。
-
-    2026-08-12 口径不变：rejected/confirmed 是已定论，不算"待处理"。
-    """
-    panel = await pending_suggestions()
-    return len(panel.pending) + len(panel.discussing)
-
-
-async def clear_settled_for_new_version(new_document_id: int, *, discard: bool = False) -> dict[str, int]:
+async def clear_settled_for_new_version(
+    new_document_id: int,
+    *,
+    applied_changes: set[tuple[int, int]] | None = None,
+) -> dict[str, int]:
     """版本变更统一结清（2026-08-12 策略反转，resume.md §12.3 决策四修订）。
 
+    ⚠️ **只服务于「生成确认 / 开始改」**（2026-09-24）：**回滚不走这里**——回滚 = 整份恢复
+    目标版开始时的工作台快照（资料集 + 改动记录一起换回），没有"结清"这一步。
+
     - **保留 discussing**：聊一聊的内容留到下一版本继续聊（是否适合新版由用户判断）。
-    - **结清 pending / confirmed / rejected / proposed**：定论项锚在旧稿上，版本变更即脱锚；
-      proposed（投递页分析产的处方）同锚在当前稿、同样会脱锚——一并 archived（若仍留 proposed）。
-    - 清空 rejected 时，**延迟记录最终被拒类别的偏好**（拒绝不即时记——
-      撤回后不算"这一类"；这里按版本变更时仍留在灰栏的最终结果记"拒掉这一类"）。
+    - **结清 pending / confirmed / rejected**：定论项锚在旧稿上，版本变更即脱锚。
+    - 清空时**延迟记录最终被拒类别的偏好**（拒绝不即时记——撤回后不算"这一类"；
+      rejected 子项按 kind=decision 记一条「拒掉这一类」决策，跨版本注入）。
 
     2026-08-20 大雷修复：结清从**物理删除**改为**软标记 + 全留存**——
-    confirmed→applied、pending/rejected/proposed→archived，记 `resolved_in_document_id=new_document_id`
+    confirmed→applied、pending/rejected→archived，记 `resolved_in_document_id=new_document_id`
     （溯源：哪版产生/哪版结清）。行不删，供「这版改了哪些点」回查（§11.8）。
+    2026-09-23：旧的 `optimization_pending` 表已停用，结清只动 change_records。
 
-    new_document_id：本次版本变更的目标稿 id（生成/改写=新稿 id；回滚=被覆盖稿 current.id）。
-    discard=True（回滚）：confirmed 也→archived——回滚丢弃这轮改动、没应用进目标稿，
-    不能谎称 applied。生成/改写走默认 False。
+    new_document_id：本次版本变更的目标稿 id（生成/改写=新稿 id）。
+    applied_changes（件 1，2026-09-24）：**本版真进了图**的已确认改动点 `{(record_id, change_id)}`。
+    只有它在集合里才标 `applied`；不在 = 被结清但**未应用** → `archived`。别把「有 confirmed」
+    当「应用了」——`generate_resume` 这条路不带已确认改动，旧实现照样标 applied，新版开场引导
+    读它就会谎报「这版做了这些调整」。None = 不关心带了什么（全部 confirmed → applied）。
 
     返回结清行数统计 {pending, confirmed, rejected}（供日志/事件文案）。
     """
-    cleared = await soft_settle_by_status(
-        {"pending", "confirmed", "rejected", "proposed"}, new_document_id, discard=discard
-    )
-    # cleared 是结清前快照（原状态 pending/confirmed/rejected），直接按原状态计数
+    records = await pending_records()
+    rejected: list[tuple[str, str]] = []  # (改哪类, 改法) —— 记偏好用
     counts = {"pending": 0, "confirmed": 0, "rejected": 0}
-    rejected_by_type: dict[str, str] = {}
-    for s in cleared:
-        counts[s.status] = counts.get(s.status, 0) + 1
-        if s.status == "rejected":
-            rejected_by_type.setdefault(s.type, s.suggested)
-    # 延迟记偏好：结清的 rejected 按 type 聚合（同类只记一条）
-    for scope, suggested in rejected_by_type.items():
-        await add_preference(kind="reject", scope=scope, content=f"拒绝建议：{suggested}")
-    if rejected_by_type:
-        logger.info("preferences_recorded_on_version_change", types=sorted(rejected_by_type))
+    for r in records:
+        for c in r.changes:
+            if c.status in counts:
+                counts[c.status] += 1
+                if c.status == "rejected":
+                    rejected.append((c.type, c.suggested))
+    # 软结清（子项级状态迁移 + 记录记 resolved_in_document_id）
+    # applied_changes 必须透传：没进图的 confirmed 不许标 applied（件 1，2026-09-24）。
+    await soft_settle_change_records({"pending", "confirmed", "rejected"}, new_document_id, included=applied_changes)
+    # 延迟记偏好：结清的 rejected 按改哪类聚合（同类只记一条），作为跨版本决策注入。
+    by_type: dict[str, str] = {}
+    for type_, suggested in rejected:
+        by_type.setdefault(type_, suggested)
+    for type_, _suggested in by_type.items():
+        await record_change(f"拒掉这一类：{type_}", kind="decision")
+        logger.info("preference_recorded_on_version_change", scope=type_)
     return counts
 
-
-async def record_custom_preference(scope: str, content: str) -> str:
-    """记一条跨版本 custom 偏好（方案 A：agent 把改简历决定持久化，每版注入生成/改写 prompt）。
-
-    同 scope 新顶旧（矛盾时后决定覆盖先决定）。返回给人/agent 看的确认文案。
-    """
-    scope = scope.strip()
-    content = content.strip()
-    await add_custom_preference(scope, content)
-    logger.info("custom_preference_recorded", scope=scope)
-    return f"已记下这条长期规则（{scope}）：{content}——以后每一版都会遵守。"
-
-
-async def get_preferences() -> str:
-    """把用户判定偏好格式化化成注入文本（拒绝项 + 自定义标准）。"""
-    prefs = await list_preferences()
-    if not prefs:
-        return ""
-    lines = [f"- [{p.scope}] {p.content}" for p in prefs]
-    return "\n".join(lines)

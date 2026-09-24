@@ -31,6 +31,12 @@ class RewriteState(BaseModel):
     typography: Typography = Field(default_factory=Typography, description="排版自由度配置（2026-09-02）：service 层从当前版本读出注入，layout 渲染用；Node 不碰 DB")
     target_role: str = Field(default="", description="目标岗位侧重（2026-09-07 ADR 0012 合并）：service 从方向槽位读出注入，content 生成侧重；Node 不碰 DB")
     preferences: str = Field(default="", description="自定义侧重（2026-09-07 ADR 0012 合并）：service 从 custom 偏好读出注入，content 生成侧重；Node 不碰 DB")
+    # 本版**真进了图**的已确认改动点 (record_id, change_id)（件 1，2026-09-24）：随草稿一起
+    # 过 checkpointer（重启不丢）。结清时据此判 applied/archived——`applied` 的字面语义是
+    # 「这版应用了它」，不能因为"有 confirmed"就一律标已应用（generate_resume 这条路不带
+    # 已确认改动，旧实现照样标 applied，害得新版开场引导谎报「这版做了这些调整」）。
+    # 只有 apply_confirmed=True（「开始改」）才非空；其余一律空 = 全标 archived。
+    applied_changes: list[tuple[int, int]] = Field(default_factory=list, description="本版进了图的已确认改动点 (record_id, change_id)")
     # 中间/产出
     intent: RewriteIntent = Field(default_factory=RewriteIntent, description="分类节点产出")
     new_json: str = Field(default="", description="内容层产出（内容优化后；无内容优化 = 原样）")

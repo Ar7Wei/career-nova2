@@ -49,7 +49,7 @@ async function measureInFrame(iframe: HTMLIFrameElement, html: string, typograph
 /**
  * 跑自动一页求解：用隐藏 iframe 量高驱动 solveOnePage。
  * @param html 当前简历的排版层 HTML（落库快照，含完整模板 + CSS）
- * @param start 当前排版（求解起点；gutter/letterSpacing 会被冻结保留进结果）
+ * @param start 当前排版（求解起点；gutter/letter_spacing 会被冻结保留进结果）
  * @returns 求解结果：成功带最终 typography；失败带原因（too_much/too_little）
  */
 export async function solveOnePageByMeasure(html: string, start: Typography): Promise<SolveResult> {

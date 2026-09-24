@@ -26,11 +26,11 @@ from app.repositories.facts import list_facts, update_fact
 from app.schemas.facts import FactCreate, FactUpdate
 from app.schemas.resume import Typography
 from app.schemas.rewrite import RewriteState
-from app.services.documents import save_document, document_task
+from app.services.documents import save_document, document_task, create_version_snapshot
 from app.services.facts import confirm_facts
 from app.services.opening import persist_opening
-from app.repositories.optimization import list_suggestions
-from app.schemas.optimization import PendingSuggestion
+from app.repositories.optimization import list_change_records
+from app.schemas.optimization import ChangeRecord
 from app.services.optimization import clear_settled_for_new_version
 from app.services.resume_edit import build_facts_text, build_focus, generate_json_from_facts
 from app.services.sessions import open_session, record_current_event
@@ -60,15 +60,34 @@ def stop_generation() -> bool:
     return True
 
 
-def _suggestions_text(suggestions: list[PendingSuggestion]) -> str:
-    """把一批已确认建议渲染成指令文本（落进 user_request 槽，进图）。
+def _confirmed_changes_text(records: list[ChangeRecord]) -> str:
+    """把一批「已确认」改动记录渲染成指令文本（落进 user_request 槽，进图）。
 
-    ADR 0015：「开始改」= 应用已确认建议，是原料本体——渲染成文本与口头请求同槽，
+    ADR 0015：「开始改」= 应用已确认改动，是原料本体——渲染成文本与口头请求同槽，
     冷启动自然变成 cold_start 的 instruction、暖态自然变成 content 的请求，不加新字段。
+    2026-09-23：记录 = 原因（为什么）+ 改动点（改什么），按聚类渲染（一个原因下 N 个改动点）。
     """
-    return "\n".join(
-        f"- [{s.type}] {s.target}: {s.original} → {s.suggested}（{s.reason}）" for s in suggestions
-    )
+    lines: list[str] = []
+    for r in records:
+        lines.append(f"【{r.reason}】")
+        for c in r.changes:
+            if c.status == "confirmed":
+                lines.append(f"- {c.target}: {c.original} → {c.suggested}")
+    return "\n".join(lines)
+
+
+def _confirmed_change_ids(records: list[ChangeRecord]) -> set[tuple[int, int]]:
+    """本版真进图的已确认改动点 `{(record_id, change_id)}`——结清时据此判 applied（件 1）。
+
+    只有真被渲染进 `user_request` 的子项才算「应用了」；没带的（`generate_resume` 这条路
+    全都不带）结清时标 archived，不许谎称 applied。
+    """
+    return {
+        (r.id or 0, c.id)
+        for r in records
+        for c in r.changes
+        if c.status == "confirmed"
+    }
 
 
 async def save_target_role(target_role: str) -> None:
@@ -101,13 +120,18 @@ async def generate_preview(user_request: str, target_role: str | None = None, ap
         if target_role:
             await save_target_role(target_role)
         request = user_request
+        applied_changes: set[tuple[int, int]] = set()
         if apply_confirmed:
-            # 「开始改」：已确认建议渲染成指令文本，与用户原话拼接进同一 request 槽。
-            confirmed = await list_suggestions(status="confirmed")
+            # 「开始改」：已确认改动记录渲染成指令文本，与用户原话拼接进同一 request 槽。
+            confirmed = await list_change_records(active_only=True)
+            confirmed = [r for r in confirmed if any(c.status == "confirmed" for c in r.changes)]
             if not confirmed:
-                raise ConflictError("没有已确认的建议——先在左栏确认或聊完后确认")
-            suggestions_text = _suggestions_text(confirmed)
-            request = f"{user_request}\n\n应用以下已确认的优化建议：\n{suggestions_text}" if user_request.strip() else f"应用以下已确认的优化建议：\n{suggestions_text}"
+                raise ConflictError("没有已确认的改动点——先在面板确认或聊完后确认")
+            changes_text = _confirmed_changes_text(confirmed)
+            request = f"{user_request}\n\n应用以下已确认的改动：\n{changes_text}" if user_request.strip() else f"应用以下已确认的改动：\n{changes_text}"
+            # 记下真进了图的子项：结清时只有这些标 applied（件 1）。随草稿过 checkpointer，
+            # confirm 时从挂起态取回——与「挂起的到底是什么」同源，不额外存单例。
+            applied_changes = _confirmed_change_ids(confirmed)
         doc = await latest_document()
         focus_role, preferences = await build_focus()
         state = RewriteState(
@@ -118,6 +142,7 @@ async def generate_preview(user_request: str, target_role: str | None = None, ap
             typography=doc.typography if doc is not None else Typography(),  # 继承当前版排版；无文档 → 默认
             target_role=focus_role,  # 侧重信号（service 读方向槽位注入，Node 不碰 DB）
             preferences=preferences,  # 侧重信号（service 读 custom 偏好注入）
+            applied_changes=sorted(applied_changes),  # 本版带了哪几条已确认改动（件 1）
         )
         await run_preview(state)
 
@@ -200,7 +225,14 @@ async def generate_confirm(decision: str = "confirm", feedback: str = "") -> tup
         # 写库（resume_json + html 双写）+ 版本变更统一结清 + 开新 session（长尾原地不动）
         saved = await save_document(markdown="", source="generated", html=new_html, summary=summary, resume_json=new_json, typography=draft.typography)
         await clear_draft()  # 落库后清草稿：下一轮 preview 从干净 thread 起
-        counts = await clear_settled_for_new_version(saved.id)
+        # 结清：只有**本版真进了图**的已确认子项标 applied（draft.applied_changes 随挂起草稿
+        # 过 checkpointer 带回来），其余 confirmed 标 archived——generate_resume 这条路不带
+        # 已确认改动，旧实现照样标 applied，害得新版开场引导谎报「这版做了这些调整」（件 1）。
+        counts = await clear_settled_for_new_version(saved.id, applied_changes=set(draft.applied_changes))
+        # 给新稿打「版本开始时」快照（件 2）：位置在结清之后——这张快照记的是「本版刚开始时的
+        # 工作台」，要包含刚被确认的那批（它们在 vN+1 任期内待定/已确认）。打在 save_document
+        # 里就太早（彼时还没结清），所以由这里补。回滚到 vN+1 时靠它把工作台恢复回来。
+        await create_version_snapshot(saved.id)
         if any(counts.values()):
             logger.info("pending_suggestions_cleared_on_confirm", cleared=counts)
         await open_session(document_id=saved.id)

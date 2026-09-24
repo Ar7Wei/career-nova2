@@ -34,8 +34,12 @@ from app.nodes.rewrite import (
 )
 from app.schemas.rewrite import RewriteIntent, RewriteState
 
-# 机器门自愈循环上限：漏事实最多回 content 补 MAX_ITERATIONS 次，超限放行（留痕）。
-# 只拦「整条事实连影子都没进成品」的硬丢失；补不齐的交人门拍板（第 3 块）。
+# 机器门暂停（2026-09-23）：validate_content 仍跑、仍留痕，但**不再回边**。
+# 判据（find_missing_facts：facts_text 的 token 是否在成品全文出现）太糙——
+# 它惩罚一切改写（美化/重命名/并组都会让它报），2026-09-23 当天 7 轮出稿里
+# 21 次校验只有 3 次干净放行、4 次打满 3 轮。判据待重做（按条目/按硬字段），
+# 这之前「改写丢内容」靠 rewrite_content.md 的「只动用户请求指向的内容」自律 +
+# 人门肉眼复核兜。详见 nodes/rewrite.py:validate_content_node。
 MAX_ITERATIONS = 3
 
 _graph: CompiledStateGraph | None = None
@@ -56,9 +60,12 @@ def _route_entry(state: RewriteState) -> str:
 
 
 def _route_after_validate_content(state: RewriteState) -> str:
-    """机器门路由：漏事实且未超限 → 回 content 补；干净或超限 → 往下走 layout。"""
-    if state.content_problems and state.iterations < MAX_ITERATIONS:
-        return "content"
+    """机器门路由：**恒走 layout**（2026-09-23 起不回边）。
+
+    回边（content_problems → content 重改）已停——判据太糙、罚一切改写，见 MAX_ITERATIONS
+    上方注释。保留本函数与 content_problems 的产出是为了留痕（人门 payload / 日志），
+    判据重做后在这里恢复回边即可。
+    """
     return "layout"
 
 

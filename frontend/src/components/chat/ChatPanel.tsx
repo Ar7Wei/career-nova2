@@ -30,6 +30,7 @@ const WORKING_TEXT_KEY: Record<WorkingKind, string> = {
   opening: 'resume.workingOpening',
   replying: 'resume.generatingReply',
   applying: 'resume.busyApplying',
+  rollingBack: 'resume.rollingBack',
 }
 
 /** 简历页右栏聊天框：消息列表 + 输入区。结构借鉴 chatbot-ui / lobe-chat。 */

@@ -1,6 +1,10 @@
-"""optimization 路由：1.2 优化建议流的 HTTP 收发（红线：Router 不写业务）。
+"""optimization 路由：1.2 优化点的 HTTP 收发（红线：Router 不写业务）。
 
-2026-08-10 落库升级：建议组落库 + 三栏面板（待定/已确认/正在聊）+ 聊一聊/裁决。
+**2026-09-23 一张表**：优化点 = 改动记录（change_records）。面板读 `/optimization/records`，
+逐条子项改状态走 `/optimization/record/status`；投递页处方「改进」走 `/optimization/promote`
+（落一条新记录 + 结清原处方行）。旧的建议流端点（/pending、/accept、/reject、/discuss、
+/retract、/update）随旧表停用一并删除。
+
 错误由 service 层抛 AppError、全局 handler 统一收口。
 """
 
@@ -8,82 +12,54 @@ from fastapi import APIRouter
 
 from app.core.errors import NotFoundError
 from app.schemas.optimization import (
-    OptimizationDecideRequest,
+    ChangeRecordListResponse,
+    ChangeStatusRequest,
     OptimizationDecideResponse,
-    PendingSuggestionsResponse,
-    SuggestionAcceptRequest,
-    SuggestionAcceptResponse,
-    SuggestionDiscussRequest,
-    SuggestionRetractRequest,
-    SuggestionRejectRequest,
+    PromotionRequest,
 )
 from app.services.optimization import (
-    accept_suggestion,
-    pending_suggestions,
+    _ensure_not_applying,
+    pending_records,
     promote_suggestion,
-    reject_suggestion,
-    retract_suggestion,
-    start_discuss,
-    update_suggestion,
+    set_change_item_status,
+    set_record_status,
 )
 
 router = APIRouter()
 
 
-@router.get("/optimization/pending", response_model=PendingSuggestionsResponse)
-async def pending() -> PendingSuggestionsResponse:
-    """读建议面板三栏（待定 / 已确认 / 正在聊）。"""
-    return await pending_suggestions()
+@router.get("/optimization/records", response_model=ChangeRecordListResponse)
+async def records(kind: str | None = None) -> ChangeRecordListResponse:
+    """读活跃改动记录（原因 + 改动点）。kind 可选过滤（change/decision）。"""
+    all_records = await pending_records()
+    if kind is not None:
+        all_records = [r for r in all_records if r.kind == kind]
+    return ChangeRecordListResponse(records=all_records)
 
 
-@router.post("/optimization/accept", response_model=SuggestionAcceptResponse)
-async def accept(req: SuggestionAcceptRequest) -> SuggestionAcceptResponse:
-    """确认一条已落库建议（pending/discussing → confirmed）。去重兜底。"""
-    s = await accept_suggestion(req.suggestion_id)
-    if s is None:
-        raise NotFoundError("建议不存在或已定论")
-    return SuggestionAcceptResponse(pending_id=s.id)
+@router.post("/optimization/record/status", response_model=OptimizationDecideResponse)
+async def record_status(req: ChangeStatusRequest) -> OptimizationDecideResponse:
+    """改一条改动记录/子项的状态。给了 change_id 改子项，否则改整条记录。
+
+    这是**用户入口**（面板）：文档任务执行中撞锁 → 抛 409（`_ensure_not_applying`）。
+    agent 工具走 service 直调，不抛、返回可读反馈（见 `set_change_item_status` 注）。
+    """
+    _ensure_not_applying()
+    if req.change_id is not None:
+        result = await set_change_item_status(req.record_id, req.change_id, req.status)
+    else:
+        result = await set_record_status(req.record_id, req.status)
+    return OptimizationDecideResponse(result=result)
 
 
-@router.post("/optimization/reject", status_code=204)
-async def reject(req: SuggestionRejectRequest) -> None:
-    """拒绝一条已落库建议（→ rejected + 记偏好"拒掉这一类"）。"""
-    await reject_suggestion(req.suggestion_id, req.reason)
-
-
-@router.post("/optimization/discuss", status_code=204)
-async def discuss(req: SuggestionDiscussRequest) -> None:
-    """聊一聊：pending → discussing（面板右栏「正在聊」区）。"""
-    await start_discuss(req.suggestion_id)
-
-
-@router.post("/optimization/promote", response_model=SuggestionAcceptResponse)
-async def promote(req: SuggestionAcceptRequest) -> SuggestionAcceptResponse:
-    """收录一条处方进优化点面板（proposed → pending）——投递页分析面板的「改进」按钮。
+@router.post("/optimization/promote", response_model=OptimizationDecideResponse)
+async def promote(req: PromotionRequest) -> OptimizationDecideResponse:
+    """收录一条处方进优化点（落一条改动记录，原处方行结清）——投递页分析面板的「改进」按钮。
 
     到这一步面板就多了一行，而面板本就每轮注入聊天 agent——这既是"收录"也是"交给 agent"
     （apply.md §11.7.7）。仅 proposed 可收录。
     """
-    s = await promote_suggestion(req.suggestion_id)
-    if s is None:
-        raise NotFoundError("建议不存在或不是待收录的处方")
-    return SuggestionAcceptResponse(pending_id=s.id)
-
-
-@router.post("/optimization/retract", status_code=204)
-async def retract(req: SuggestionRetractRequest) -> None:
-    """撤回一条已定论建议（confirmed/discussing/rejected → pending，2026-08-12）。
-
-    右三栏每条「撤回」：已确认（改前可撤回）、正在聊、已拒绝（版本内拉回）都能回到待定。
-    """
-    await retract_suggestion(req.suggestion_id)
-
-
-@router.post("/optimization/update", response_model=OptimizationDecideResponse)
-async def update(req: OptimizationDecideRequest) -> OptimizationDecideResponse:
-    """更新一条建议（agent update_suggestion 工具执行，2026-08-25 起开放全状态操作）。
-
-    decision：accept / reject / refine / split / discuss / retract（§12.6 优化点操作权）。
-    """
-    result = await update_suggestion(req.suggestion_id, req.decision, refined=req.refined, split_to=req.split_to)
-    return OptimizationDecideResponse(result=result)
+    rec = await promote_suggestion(req.suggestion_id)
+    if rec is None:
+        raise NotFoundError("处方不存在或不是待收录状态")
+    return OptimizationDecideResponse(result=f"处方已收录为改动记录 #{rec.id}。")

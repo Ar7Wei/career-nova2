@@ -24,7 +24,7 @@ from app.services import chat_tools
 from app.services.chat_tools._assembly import begin_turn
 from app.services.direction import clear_pending_disposal, get_pending_disposal, get_direction_changed, clear_direction_changed
 from app.services.llm import run_with_cancel
-from app.services.optimization import count_suggestions
+from app.services.optimization import count_open_records
 from app.services.rewrite import get_preview
 from app.services.sessions import (
     current_session,
@@ -128,8 +128,8 @@ async def handle_message(session_id: int | None, text: str) -> ChatSessionRespon
     reply_sid = sess_after.id if sess_after is not None else sid
     await record_assistant_message(reply_sid, reply_text)
 
-    # 本轮产出的建议数（suggest_improvements 已落库，前端据此提示「去面板查看」）
-    suggestion_count = await count_suggestions()
+    # 本轮产出的改动记录数（suggest_improvements/record_change 已落库，前端据此提示「去面板查看」）
+    suggestion_count = await count_open_records()
     # ADR 0017（2026-09-01 系统气泡三档）：建议提示落库为「事件灰条」（kind=suggestion_hint），
     # 不再由前端硬编码 assistant 文本气泡——系统动作与对话内容分开呈现，且留痕可回看。
     # 文案用系统口吻「已放 N 条」（非对话口吻「给你 N 条」）。

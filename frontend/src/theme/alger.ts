@@ -1,4 +1,4 @@
-import { ActionIcon, Button, createTheme, Input, Notification, rem, type MantineColorsTuple } from '@mantine/core'
+import { ActionIcon, Button, createTheme, Input, Menu, Notification, rem, type MantineColorsTuple } from '@mantine/core'
 
 /**
  * Alger 主题（借鉴 AlgerMusicPlayer，单主题 light）。
@@ -146,6 +146,21 @@ export const algerTheme = createTheme({
     Notification: Notification.extend({
       styles: {
         root: {
+          background: 'var(--glass-bg)',
+          backdropFilter: 'var(--glass-blur)',
+          WebkitBackdropFilter: 'var(--glass-blur)',
+          border: '1px solid var(--glass-border)',
+          boxShadow: 'var(--shadow-pop)',
+        },
+      },
+    }),
+    // 下拉弹层（Menu.Dropdown，如简历「下载」菜单）：与 toast/ToolTab 玻璃浮窗同一套
+    // 「白玻璃弹层」规范（2026-09-24 用户观测：下载菜单背景透明度跟其它弹层不一致）。
+    // 出厂是白底实心（Menu dropdown 默认 --mantine-color-white 不透明），换成 .glass 三件套。
+    // 与 Notification 同一做法——主题注入 dropdown 槽，全站所有 Menu 下拉统一，不单点 CSS。
+    Menu: Menu.extend({
+      styles: {
+        dropdown: {
           background: 'var(--glass-bg)',
           backdropFilter: 'var(--glass-blur)',
           WebkitBackdropFilter: 'var(--glass-blur)',

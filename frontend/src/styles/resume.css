@@ -194,9 +194,11 @@
   min-width: 260px;
 }
 /* 版本历史浮窗（2026-08-24）：从「左栏内联折叠面板」改为 ToolTab 玻璃浮窗（盖在内容上方）。
-   .tool-panel 提供玻璃底 + fixed 定位 + flex；这里只覆写尺寸 + 让行可滚动。 */
+   .tool-panel 提供玻璃底 + fixed 定位 + flex；这里只覆写尺寸 + 让行可滚动。
+   2026-09-24：面板加宽 380→480px，行内各栏改固定宽度（来源文案不再 flex:1），
+   无「回看版本」按钮的行渲染同宽占位，保证来源/日期列跨行对齐、不塌陷到按钮位。 */
 .version-panel {
-  width: 380px;
+  width: 480px;
   max-height: 60vh;
   /* fixed 浮窗不设 z-index 会被聊天输入框（Mantine Textarea 层叠更高）盖住；
      与建议/资料集浮窗同层 z-index:60。 */
@@ -209,12 +211,39 @@
 }
 .resume-version-row {
   display: flex;
+  /* 垂直居中（2026-09-24 用户）：来源折两行时，chip/日期/按钮仍与整行上下居中。 */
   align-items: center;
-  gap: var(--space-2);
+  /* 统一 gap（2026-09-24 用户定稿）：列宽「内容自适应」，行内只留一个统一间距节奏。
+     之前给日期/按钮设固定宽（96px 等），按钮内容只 ~60px、剩下是栏位留白——
+     各段间距由 margin+栏位 padding 拼成、不统一且拥挤。改内容自适应 + 单 gap 后节奏一致。
+     用 --space-3(12px)：比 space-2 松，不拥挤。 */
+  gap: var(--space-3);
   padding: var(--space-1)
 }
+/* 行间浅色分隔线（2026-09-24 用户）：首行不加，用 padding 撑开行距、border 画线。 */
+.resume-version-row + .resume-version-row {
+  margin-top: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border-light);
+}
+/* 版本号 chip：固定宽度（版本号位数变化「第1稿/第10稿」时锚定左列不晃动）；
+   行间距交给统一 gap，不再单设 margin。 */
+.resume-version-chip {
+  flex: none;
+  width: 64px;
+  justify-content: center;
+}
+/* 来源/简述：弹性占满中间空隙（flex:1），把日期/按钮顶向右缘；折两行、第三行截断。
+   前端另有 truncateSummary 字数硬截（40 字）双保险；悬停 title 看全文。 */
 .resume-version-source {
   flex: 1;
+  min-width: 0; /* flex 子项默认 min-content 会撑出溢出；归零让超长省略/clamp 生效。 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
   font-size: var(--font-size-sm);
   color: var(--color-muted);
 }
@@ -224,12 +253,21 @@
   font-variant-numeric: tabular-nums;
 }
 .resume-version-date {
+  flex: none;
   font-size: var(--font-size-sm);
   color: var(--color-placeholder);
 }
-/* 版本行回滚按钮推到行尾（Mantine Button） */
+/* 「回看版本」按钮：内容自适应宽度（不再设 96px 栏宽——那才是「拥挤留白」的来源）；
+   flex:none 不被 flex:1 的来源挤压，间距交给行内统一 gap。 */
 .resume-version-row .mantine-Button-root {
-  margin-left: auto
+  flex: none;
+}
+/* 无按钮行的占位按钮（当前稿/第1稿）：渲染同款真实按钮但不可见——宽度自动等于真实按钮
+   内容宽（不手算像素），把来源的 flex:1 顶住、让无按钮行的右缘与有按钮行对齐。
+   visibility:hidden 保留布局宽度、不占视觉；禁交互防误触/被 Tab 选中。 */
+.resume-version-btn-placeholder {
+  visibility: hidden;
+  pointer-events: none;
 }
 .resume-preview {
   flex: 1;
@@ -798,6 +836,32 @@
   position: relative; /* 悬浮卡定位参照 */
 }
 
+/* ---------------------------------------------------------------------------
+   回滚乐观态（2026-09-24）：确认回滚后左栏立刻切到目标稿 + 半透明 + 右下角「正在回滚…」。
+   后端那套「软作废 + 工作台恢复 + 开新 session」期间，用户不必干等——看到的是「已切过去、还在落定」。
+   半透明只降预览层，不挡悬浮指示；指示卡与解析进度卡同款（玻璃 + 打字点）。
+   --------------------------------------------------------------------------- */
+.resume-preview.rolling-back .resume-preview-html,
+.resume-preview.rolling-back .resume-preview-text,
+.resume-preview.rolling-back .resume-preview-pdf {
+  opacity: 0.55;
+  transition: opacity 0.25s var(--ease-out);
+}
+.resume-rollback-float {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-3);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-ink);
+}
+
 /* indeterminate 进度条：滚动细条（抽取无百分比） */
 .resume-extract-progress {
   width: 100%;
@@ -1292,6 +1356,25 @@
   flex-direction: column;
   gap: var(--space-1);
   /* 滚动条走全局窄滚动条规则（6px hover 显示），此处不重复 */
+}
+/* 栏内「原因」分组（2026-09-23）：一条原因下挂 N 个改动点，原因只写一次。
+   分组头是小号弱化的行，压住它下面的卡片；卡片之间靠 .suggestion-list 的 gap。 */
+.suggestion-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.suggestion-group + .suggestion-group {
+  margin-top: var(--space-2);
+}
+.suggestion-group-head {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-muted);
+  padding: var(--space-1) var(--space-2) 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .suggestion-item {
   border-radius: var(--radius-sm);

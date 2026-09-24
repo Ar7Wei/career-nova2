@@ -39,10 +39,10 @@ from app.repositories.facts import list_facts
 from app.schemas.analysis import AnalysisReportOut
 from app.schemas.analysis_graph import AnalysisState
 from app.schemas.jobs import Job
-from app.schemas.optimization import Suggestion
+from app.schemas.optimization import ChangeRecord
 from app.schemas.report_block import ChartBlock, ReportBlock, TextBlock
 from app.services.llm import llm_service
-from app.services.optimization import proposed_suggestions, record_suggestion
+from app.services.optimization import list_change_records, record_change
 from app.utils.facts import flatten_facts
 
 # 「已投递」日报的观察窗（往回看 N 天，§11.7.5）——趋势/存量看这段，截至本地日。
@@ -163,13 +163,23 @@ async def _distill_with_jd(jobs: list[Job]) -> list[str]:
     return lines
 
 
+async def _pending_prescriptions() -> list[ChangeRecord]:
+    """该批**未被收录**的处方（origin=job_analysis，子项仍 pending）。
+
+    2026-09-23 起处方也是 change_records：点「改进」= 子项 pending → confirmed，
+    该条自然从本列表消失（分析面板不再展示已被收录的处方）。
+    """
+    records = await list_change_records(origin="job_analysis", active_only=True)
+    return [r for r in records if any(c.status == "pending" for c in r.changes)]
+
+
 async def read_batch(round_id: int) -> AnalysisReportOut | None:
-    """读缓存的批次报告（含该批的 proposed 处方）；没算过返回 None（§11.7.5 有则读）。"""
+    """读缓存的批次报告（含该批未收录的处方）；没算过返回 None（§11.7.5 有则读）。"""
     cached = await reports_repo.get_report("batch", str(round_id))
     if cached is None:
         return None
     content, created = cached
-    return _batch_out_from_content(str(round_id), content, created, await proposed_suggestions())
+    return _batch_out_from_content(str(round_id), content, created, await _pending_prescriptions())
 
 
 async def batch_has_input(round_id: int) -> bool:
@@ -212,14 +222,14 @@ async def _compute_batch(round_id: int, key: str) -> AnalysisReportOut | None:
         prepare_materials=_prepare_batch_materials,
         persist=_persist_batch,
     )
-    # 处方落库在 persist 里完成；读回该批 proposed 处方针随报告返回（一屏两物）。
+    # 处方落库在 persist 里完成；读回该批未收录的处方针随报告返回（一屏两物）。
     return AnalysisReportOut(
         scope="batch",
         scope_key=key,
         headline=state.headline,
         blocks=state.blocks,
         meta=state.meta,
-        suggestions=await proposed_suggestions(),
+        suggestions=await _pending_prescriptions(),
     )
 
 
@@ -248,19 +258,20 @@ async def _prepare_batch_materials(jobs: list[Job], scope: str) -> dict[str, str
 
 
 async def _persist_batch(state: AnalysisState) -> None:
-    """落库：报告（含块流）→ analysis_reports；处方 → optimization_pending（status=proposed）。"""
+    """落库：报告（含块流）→ analysis_reports；处方 → change_records（origin=job_analysis）。"""
     created = 0
     for p in state.prescriptions:
-        await record_suggestion(
-            Suggestion(
-                type=p["type"],
-                target=p.get("target", ""),
-                original=p.get("original", ""),
-                suggested=p.get("suggested", ""),
-                reason=p.get("reason", ""),
-                severity=p.get("severity", "medium"),
-            ),
-            status="proposed",
+        await record_change(
+            str(p.get("reason", "")).strip() or "投递页分析处方",
+            [
+                {
+                    "target": p.get("target", ""),
+                    "original": p.get("original", ""),
+                    "suggested": p.get("suggested", ""),
+                    "type": p.get("type", "structure"),
+                    "severity": p.get("severity", "medium"),
+                }
+            ],
             origin="job_analysis",
         )
         created += 1

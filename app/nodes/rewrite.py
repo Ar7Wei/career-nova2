@@ -71,41 +71,43 @@ async def content_node(state: RewriteState) -> Command:
 
     S8（2026-08-14）：run_content_agent 返回 (json, summary)——summary 是版本名，
     一并写回 state 供 service 落库。无内容优化时 summary 保持空（service 回退规则名）。
-    2026-09-07（ADR 0012）：content_problems 非空 = 机器门回边——把它当「硬性补回清单」
-    喂 LLM，且本轮基于上一轮产出的 new_json 继续改（不是从 current_json 重来）。
-    iterations +1（MAX_ITERATIONS 兜底防死循环，路由层读）。
+    2026-09-23：机器门回边已停（见 MAX_ITERATIONS），本节点不再收到「硬性补回清单」——
+    `{facts_feedback}` 段恒为空。
     """
     intent = state.intent
     # 人门 revise 回边（feedback 非空）优先于首轮 intent：用户对人门草稿拍了「带意见重改」，
     # 本轮修改请求 = feedback——即使首轮是 layout 意图（content 原样透传过），这条意见也要照改，
     # 否则 feedback 会被 intent 守卫静默吞掉（改了个寂寞，再挂人门还是同一版）。
     if state.feedback or intent.text in ("content", "both"):
-        # 人门 feedback 当本轮修改请求（区别于机器门 content_problems 的硬性补回清单——
-        # 一个主观意见、一个确定性缺失）。
+        # 人门 feedback 当本轮修改请求（用户的主观意见，区别于已停用的机器门硬性补回清单）。
         request = state.feedback or intent.content_request or state.user_request
         base_json = state.new_json or state.current_json
-        feedback = "\n".join(f"- {m}" for m in state.content_problems)
+        # 机器门回边已停（2026-09-23），没有「必须补回」的硬清单了。
         new_json, summary = await run_content_agent(
-            base_json, request, state.facts_text, feedback, state.target_role, state.preferences
+            base_json, request, state.facts_text, state.target_role, state.preferences
         )
         return Command(update={"new_json": new_json, "summary": summary, "iterations": state.iterations + 1})
-    # 无内容优化（首轮 layout 且未 revise）：内容层不动（交接原 JSON 给渲染），不增量（没有内容改写可回边）
+    # 无内容优化（首轮 layout 且未 revise）：内容层不动（交接原 JSON 给渲染），不增量
     return Command(update={"new_json": state.current_json})
 
 
 async def validate_content_node(state: RewriteState) -> Command:
-    """机器门：事实覆盖校验（确定性，不调 LLM）。
+    """机器门（**已停用回边**，只留痕）：事实覆盖校验（确定性，不调 LLM）。
 
-    new_json 里每个 active 且 on_resume 的事实都必须有影子；漏了写回 content_problems
-    （路由层据此回边 content 补回）。只对 content/both 生效——layout/none 无内容改写，
-    机器门不适用（current_json 是上一版已通过校验的产物，无漏检风险；也不回边 content
-    以免 content_node 对 layout 意图不做改写而空转死循环）。
+    new_json 里每个 active 且 on_resume 的事实都应"有影子"；没影子的写进 content_problems
+    **仅供留痕**（人门 payload / 日志），路由层不再据此回边——见 graphs/rewrite.py 的
+    MAX_ITERATIONS 注释。
+
+    为什么停回边（2026-09-23）：判据是「title 的 token 有没有在成品全文出现」，太糙——
+    专名保住就放行、专名被改写（正是"美化"的常态）就报，跟"内容丢没丢"关系不大。
+    当天 7 轮出稿 21 次校验只有 3 次干净放行、4 次打满 3 轮把模型逼回去。判据待重做
+    （按条目比对 / 只查硬字段），这之前宁可放宽不可误伤。
     """
     if state.intent.text not in ("content", "both"):
         return Command(update={"content_problems": []})
     json_text = state.new_json or state.current_json
     missing = find_missing_facts(state.facts_text, resume_from_json(json_text)) if json_text.strip() else []
-    logger.info("rewrite_content_validated", missing=len(missing), iterations=state.iterations)
+    logger.info("rewrite_content_validated", missing=len(missing), iterations=state.iterations, enforced=False)
     return Command(update={"content_problems": missing})
 
 
