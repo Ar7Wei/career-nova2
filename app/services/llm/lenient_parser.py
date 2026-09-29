@@ -83,6 +83,30 @@ def _balanced_json_blocks(text: str) -> list[str]:
     return blocks
 
 
+def _resolve_field_schema(schema: Type, field_name: str) -> Type | None:
+    """从字段注解里解析出内层 pydantic schema。
+
+    - list[SubModel] → SubModel
+    - SubModel（直接） → SubModel
+    - 标量（str/int 等） → None（无需归一化）
+    """
+    ann = getattr(schema, "model_fields", {}).get(field_name)
+    if ann is None:
+        return None
+    ann_type = ann.annotation
+    # 剥掉 Optional[X] 包装
+    if typing.get_origin(ann_type) is typing.Union:
+        non_none = [a for a in typing.get_args(ann_type) if a is not type(None)]  # noqa: E721
+        ann_type = non_none[0] if non_none else ann_type
+    origin = typing.get_origin(ann_type)
+    if origin is list:
+        args = typing.get_args(ann_type)
+        ann_type = args[0] if args else None
+    if isinstance(ann_type, type) and issubclass(ann_type, BaseModel):
+        return ann_type
+    return None
+
+
 def _schema_score(schema: Type[BaseModel] | None, payload: Any) -> int:
     """Payload 命中 schema 顶层字段的个数（含 ``_FIELD_ALIASES`` 别名）。
 
@@ -100,6 +124,45 @@ def _schema_score(schema: Type[BaseModel] | None, payload: Any) -> int:
             score += 1
     if score == 0 and "facts" in fields and any(k in payload for k in _CATEGORY_KEYS):
         score = 1  # 分类名当顶层 key 的 facts 漂移真身
+    if score == 0:
+        # 包装器看穿（2026-09-29，ContentEditResult 事故）：schema 是「单产物字段 + 标量过程字段」
+        # 的包装器（{"resume":{...},"objection":""}），而 payload 是**平铺的产物**（顶层直接是
+        # {"summary","basics",...}）——顶层对包装器命中 0。看穿到那个产物字段的内层 schema 再打分，
+        # 否则多块挑选时平铺真身与脏信封同 0 分、平局回退到第一个块（信封）→ 整份简历被丢。
+        # 看穿分**不参与平局回退**（见 _extract_json / _top_level_score）：它只是挑块信号。
+        # ⚠️ 严格以「正好一个缺席的 BaseModel 产物字段」为门——多产物字段的 schema（如 ExtractedFacts
+        # 的 facts/coverage）不是包装器，不能看穿（否则 facts 漂移真身会被看穿分搅乱回退）。
+        wrapper_fields = [
+            field_name
+            for field_name in fields
+            if field_name not in payload and _resolve_field_schema(schema, field_name) is not None
+        ]
+        if len(wrapper_fields) == 1:
+            inner = _resolve_field_schema(schema, wrapper_fields[0])
+            if inner is not None:
+                inner_score = _schema_score(inner, payload)
+                if inner_score > 0:
+                    score = inner_score
+    return score
+
+
+def _top_level_score(schema: Type[BaseModel] | None, payload: Any) -> int:
+    """**顶层字段**命中数（不含包装器看穿）——多块平局时「回退第一个块」的判据。
+
+    与 `_schema_score` 分工：后者把「看穿进包装器内层」的命中也算进去（用于挑最像的块）；
+    本函数只数顶层真字段/别名。若只看穿分（平铺产物对包装器）也算「非 0」，多块场景会
+    误信信封/真身「有内容」而不回退——facts 分类漂移 + 前置信封就是被这条坑的（真身
+    看穿分 1、信封 facts 兜 1，平局后都不回退，错选信封丢真身）。
+    """
+    if schema is None or not isinstance(payload, dict):
+        return 0
+    fields = getattr(schema, "model_fields", {})
+    score = 0
+    for field_name in fields:
+        if field_name in payload or any(a in payload for a in _FIELD_ALIASES.get(field_name, [])):
+            score += 1
+    if score == 0 and "facts" in fields and any(k in payload for k in _CATEGORY_KEYS):
+        score = 1
     return score
 
 
@@ -137,8 +200,17 @@ def _extract_json(text: str, schema: Type[BaseModel] | None = None) -> Any:
     if len(candidates) == 1 or schema is None:
         return candidates[0]
     # 多块：按 schema 形状选最像目标的（信封在前、真身在后的粘连靠这道救回）。
+    # 挑选用 `_schema_score`（含包装器看穿——平铺产物也能赢过信封）。「要不要回退」看
+    # **顶层命中**（`_top_level_score`）：看穿分只是挑块信号，不该当「有内容」的证据。
+    # 回退目标是「第一个顶层命中 > 0 的块」而非无脑第一个——facts 漂移真身（分类名当顶层 key）
+    # 顶层命中 > 0，该选它；只有连一个顶层命中的块都没有时才退回 candidates[0]（保守不更差）。
     best = max(candidates, key=lambda c: _schema_score(schema, c))
-    return best if _schema_score(schema, best) > 0 else candidates[0]
+    if _top_level_score(schema, best) > 0:
+        return best
+    for c in candidates:
+        if _top_level_score(schema, c) > 0:
+            return c
+    return best  # 全 0：信看穿挑选（包装器平铺真身就靠这道赢过信封）
 
 
 def _normalize_item(schema: Type, item: dict[str, Any]) -> dict[str, Any]:
@@ -157,30 +229,6 @@ def _normalize_item(schema: Type, item: dict[str, Any]) -> dict[str, Any]:
         if found is not None:
             result[field_name] = found
     return result
-
-
-def _resolve_field_schema(schema: Type, field_name: str) -> Type | None:
-    """从字段注解里解析出内层 pydantic schema。
-
-    - list[SubModel] → SubModel
-    - SubModel（直接） → SubModel
-    - 标量（str/int 等） → None（无需归一化）
-    """
-    ann = getattr(schema, "model_fields", {}).get(field_name)
-    if ann is None:
-        return None
-    ann_type = ann.annotation
-    # 剥掉 Optional[X] 包装
-    if typing.get_origin(ann_type) is typing.Union:
-        non_none = [a for a in typing.get_args(ann_type) if a is not type(None)]  # noqa: E721
-        ann_type = non_none[0] if non_none else ann_type
-    origin = typing.get_origin(ann_type)
-    if origin is list:
-        args = typing.get_args(ann_type)
-        ann_type = args[0] if args else None
-    if isinstance(ann_type, type) and issubclass(ann_type, BaseModel):
-        return ann_type
-    return None
 
 
 def _parse_facts(payload: Any, schema: Type[T]) -> list[Any]:
@@ -299,6 +347,27 @@ def _lenient_parse(text: str, schema: Type[T]) -> T:
             inner = dict_vals[0][1]
             if _schema_score(schema, inner) > _schema_score(schema, raw):
                 raw = inner
+    # 单字段包装器拆包（2026-09-29，ContentEditResult 事故）：目标 schema 形如
+    # ``{"resume": {...}, "objection": ""}``——只有一个 BaseModel 字段（产物本体）+ 若干标量
+    # 过程字段。模型按旧习惯**平铺返回产物**（顶层直接是 {"summary","basics",...}，没有 resume
+    # 包装键）时，通用归一化只保留 resume/objection 两个字段 → payload={} → 静默返回空产物
+    # → run_content_agent 误判 EmptyOutputError。这里检测「该模型字段在顶层缺席、而整份 raw
+    # 反而更像个内层产物」时，把 raw 整体包进该字段再校验，把平铺的简历救回来。
+    if isinstance(raw, dict) and schema is not None:
+        model_fields = getattr(schema, "model_fields", {})
+        wrapper_fields = [
+            name
+            for name in model_fields
+            if name not in raw and _resolve_field_schema(schema, name) is not None
+        ]
+        if len(wrapper_fields) == 1:
+            fname = wrapper_fields[0]
+            inner_schema = _resolve_field_schema(schema, fname)
+            # 「更像内层产物」才包：内层看穿分须严格高于**顶层命中**（`_top_level_score`，不含别名）。
+            # 不能用含别名的 `_schema_score` 当外层分——summary 既是 Resume 真字段又是
+            # ContentEditResult.note 的别名，撞车会白送外层 1 分把拆包卡住（事故当天就是这么丢的）。
+            if inner_schema is not None and _schema_score(inner_schema, raw) > _top_level_score(schema, raw):
+                raw = {fname: raw}
     payload: dict[str, Any]
     if isinstance(raw, list):
         payload = {"facts": raw}

@@ -209,9 +209,10 @@ async def apply_suggestions_tool(brief: str = "") -> str:
     下一轮才能调本工具——否则会被系统拒绝。
 
     前置门控（**代码强制**，不是建议）：
-    - 还有「待定（pending）」改动点 → **系统直接拦下本工具**，把待定点念回给你。先逐条跟用户过完
-      （聊透的 `set_change_status(accept)`、不要的 `reject`、这轮先不带的 `discuss` 并口头交代），
-      清空后**重新提案**再调本工具。
+    - 还有「待定（pending）」改动点 → **系统直接拦下本工具**，把待定点念回给你。**拦阻不作废你已
+      拿到的「开始改」授权**——拿得准的自己逐条定论（聊透的 `set_change_status(accept)`、不要的
+      `reject`、这轮先不带的 `discuss` 并口头交代），只有真拿不准的才单独问用户那一条；
+      待定清空后**直接重调本工具**（不用重新提案、不用等用户再答话）。
     - 已确认数量 1~2 条 → 建议再攒攒（改一轮成本不低）；用户坚持就改。
 
     - brief（可选）：你组装的**完整指令**——这轮要干什么、怎么干、为什么、要遵守哪些决策
@@ -227,14 +228,20 @@ async def apply_suggestions_tool(brief: str = "") -> str:
     # 这道在执行那一刻把「还有 pending」变成硬拦，逼它先逐条过完（或显式转 discussing 留下）再出稿。
     pending_lines = await list_pending_change_lines()
     if pending_lines:
-        execution_proposal.clear()  # 消费掉提案——拦阻后 agent 得先把待定过完、再重新提案
+        # 拦阻**不作废提案**（2026-09-29）：用户「开始改」的授权已给，pending 只是执行路上的
+        # 中间站——清完待定后**直接重调本工具**即可放行（check 的「用户回过话」判据早已满足），
+        # 不必重新提案、更不必回头再向用户讨一次授权。旧实现在此 `execution_proposal.clear()`，
+        # 把授权连同拦阻一起撕了，逼 agent 每清一批待定就重新提案、再问一遍用户——事故当天
+        # 就这么来回卡了 3 次。
         listing = "\n".join(f"{i}. {ln}" for i, ln in enumerate(pending_lines, start=1))
         return (
-            f"还有 {len(pending_lines)} 条改动点没聊定（待定），**先别改**，逐条跟用户过完再出稿：\n"
+            f"还有 {len(pending_lines)} 条改动点没聊定（待定），先逐条定论再出稿：\n"
             f"{listing}\n\n"
-            "逐条处理：聊透、用户给了确定口吻的 → `set_change_status(accept)` 标已确认（这版带走）；"
+            "逐条处理（**拿得准的直接定论，不必再回头问用户**——你已拿到的「开始改」授权还有效）：\n"
+            "聊透、用户给了确定口吻的 → `set_change_status(accept)` 标已确认（这版带走）；"
             "明确不要的 → `reject`；还没聊到、这轮先不带的 → `discuss`（在聊，留到下一轮，"
-            "并口头交代「这几条这轮先不带」）。**待定清空后重新提案、再调本工具**。"
+            "并口头交代「这几条这轮先不带」）。**只有某条你真拿不准、需要用户拍板时，才单独问那一条**；"
+            "待定清空后**直接重调本工具**（不用重新提案、不用等用户再答话）。"
         )
     try:
         await generate_preview(user_request=brief or "应用已确认的改动", apply_confirmed=True)
