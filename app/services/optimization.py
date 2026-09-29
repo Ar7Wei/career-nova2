@@ -231,6 +231,26 @@ async def count_open_records() -> int:
     )
 
 
+async def list_pending_change_lines() -> list[str]:
+    """开始改前的拦阻清单：列出所有「还没聊」的 pending 子项（可念给用户逐条过）。
+
+    只列 **pending**——那是「聊了方向但还没拍板 / 提了但没聊」的，开始改时必须逐条过：
+    聊透的转 confirmed（带进图）、真没聊的留下或转 discussing。discussing（在聊）不列不拦
+    （由 agent 口头交代「这轮先不带」）；confirmed（正要带走的）更不该列。
+
+    每条格式：`#记录id.子项id [原因] 锚点：原文 → 建议`——agent 据此逐条念给用户，
+    用 set_change_status 定论（accept 要带 / reject 不带 / discuss 留下轮）。
+    """
+    lines: list[str] = []
+    for r in await list_change_records(active_only=True):
+        for c in r.changes:
+            if c.status != "pending":
+                continue
+            arrow = f"{c.original} → {c.suggested}" if c.original else c.suggested
+            lines.append(f"#{r.id}.{c.id} [{r.reason}] {c.target}：{arrow}")
+    return lines
+
+
 async def clear_all_change_records() -> int:
     """核爆：清空全部改动记录。"""
     return await _clear_all_change_records()

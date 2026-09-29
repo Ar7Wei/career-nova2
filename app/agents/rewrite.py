@@ -10,9 +10,9 @@
 from langchain_core.messages import HumanMessage
 from app.core.errors import EmptyOutputError
 from app.core.logging import logger
-from app.prompts import load_rewrite_classify_prompt, load_rewrite_content_prompt
-from app.schemas.resume import Resume, resume_to_json
-from app.schemas.rewrite import RewriteIntent
+from app.prompts import load_rewrite_classify_prompt, load_rewrite_content_prompt, load_rewrite_verify_prompt
+from app.schemas.resume import resume_to_json
+from app.schemas.rewrite import ContentEditResult, RewriteIntent, VerifyChangesResult
 from app.services.llm import llm_service
 
 
@@ -33,19 +33,45 @@ async def run_content_agent(
     facts: str = "",
     target_role: str = "",
     preferences: str = "",
-) -> tuple[str, str]:
-    """按用户请求在 resume JSON 上改内容，返回 (完整新版 JSON 字符串, 版本名)。
+) -> tuple[str, str, str]:
+    """按用户请求在 resume JSON 上改内容，返回 (完整新版 JSON 字符串, 版本名, 异议)。
 
-    结构化输出：LLM 直接吐 Resume，version 名走 resume.summary 字段。
+    结构化输出：LLM 吐 ContentEditResult（resume 本体 + objection），版本名取 resume.summary。
     2026-09-01：facts = 资料集当前事实，暖态只补缺口（JSON 权威，facts 不覆盖）。
-    2026-09-23：机器门回边已停，`facts_feedback` 参数随之删除（没有生产者了）。
+    2026-09-28：返回值加第三位 objection——落实门补改（request 里带「上次没落实」清单）时，
+      content 若认为复核把「其实改了」的判成「没改」，在 objection 写一句异议，交回复核仲裁；
+      其余情况恒为空串。
     2026-09-07（ADR 0012 合并）：target_role/preferences = 侧重信号（service 读出注入，
     Node 不碰 DB），只指导内容侧重、不写进成品。
     改坏了（整份空）→ EmptyOutputError。
     """
     prompt = load_rewrite_content_prompt(resume_json, user_request, facts, target_role, preferences)
-    resume: Resume = await llm_service.call([HumanMessage(content=prompt)], response_format=Resume)
+    result: ContentEditResult = await llm_service.call([HumanMessage(content=prompt)], response_format=ContentEditResult)
+    resume = result.resume
     if not resume.basics.name and not resume.work and not resume.projects and not resume.skills and not resume.education:
         raise EmptyOutputError("模型没改出内容，换个说法再试或换模型")
-    logger.info("rewrite_content_done", json_chars=len(resume_to_json(resume)), summary=resume.summary)
-    return resume_to_json(resume), resume.summary
+    logger.info("rewrite_content_done", json_chars=len(resume_to_json(resume)), summary=resume.summary, has_objection=bool(result.objection))
+    return resume_to_json(resume), resume.summary, result.objection
+
+
+async def run_verify_changes_agent(
+    confirmed_changes: str,
+    old_json: str,
+    new_json: str,
+    content_objection: str = "",
+) -> VerifyChangesResult:
+    """改动落实核对（2026-09-28 改动落实门）：逐条判 confirmed 改动在新稿里落实了没。
+
+    这是「聊定了 → 出稿」的最后一道卡：confirmed 清单（用户拍板要改的）+ 旧稿 + 新稿，
+    复核 LLM 逐条对「新稿有没有这条改动要的结果」。missed 非空 = 有遗漏，图据此回边
+    content 补改（带上具体缺哪条）。判据是**语义级**的（看结果不看字面）——这正是它区别于
+    已停用的 find_missing_facts（关键词子串、罚一切改写）的地方。
+
+    content_objection：上一轮 content 对复核判定的异议（「这条其实改了/不用改」）。复核要
+    重新看一眼——异议成立的（确实是误判）就把那条从 missed 撤掉，不成立才保留。这让
+    「复核误判」有机会在图内被纠正，而不是把 content 按头反复改。
+    """
+    prompt = load_rewrite_verify_prompt(confirmed_changes, old_json, new_json, content_objection)
+    result: VerifyChangesResult = await llm_service.call([HumanMessage(content=prompt)], response_format=VerifyChangesResult)
+    logger.info("rewrite_changes_verified", missed=len(result.missed), had_objection=bool(content_objection))
+    return result

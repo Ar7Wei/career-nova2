@@ -31,6 +31,7 @@ from app.nodes.rewrite import (
     layout_node,
     validate_content_node,
     validate_node,
+    verify_changes_node,
 )
 from app.schemas.rewrite import RewriteIntent, RewriteState
 
@@ -60,13 +61,31 @@ def _route_entry(state: RewriteState) -> str:
 
 
 def _route_after_validate_content(state: RewriteState) -> str:
-    """机器门路由：**恒走 layout**（2026-09-23 起不回边）。
+    """事实覆盖门路由：**恒走 verify_changes**（2026-09-23 起不回边 content）。
 
     回边（content_problems → content 重改）已停——判据太糙、罚一切改写，见 MAX_ITERATIONS
-    上方注释。保留本函数与 content_problems 的产出是为了留痕（人门 payload / 日志），
-    判据重做后在这里恢复回边即可。
+    上方注释。保留本节点与 content_problems 的产出是为了留痕（人门 payload / 日志）。
+    事实覆盖门不再拦，但「改动落实门」（verify_changes）接在它后面——管「聊定的改了没」。
     """
-    return "layout"
+    return "verify_changes"
+
+
+def _route_after_verify_changes(state: RewriteState) -> str:
+    """改动落实门路由（2026-09-28）：missed 非空且未超限 → 回 content 补改；否则往下走 layout。
+
+    这是「聊定了 → 出稿」的最后一道卡。判据是 LLM 语义级（看结果不看字面），区别于已停的
+    事实覆盖门（关键词子串）。只对「开始改」（有 confirmed 清单）跑——没有就不回边、直下 layout。
+    超限放行 + missed_changes 留痕（人门 payload / 日志），不死循环逼改。
+    超限判据用独立的 verify_iterations（2026-09-29）：不与人门 revise 共享 iterations——
+    否则用户 revise 几轮后落实门再想补改，会因 iterations 满了被直接放行，漏网 confirmed 进人门。
+    """
+    if not state.confirmed_changes_text.strip():
+        return "layout"  # 无 confirmed 改动可核（纯 generate/口头改）→ 不拦
+    if not state.missed_changes:
+        return "layout"  # 全落实 → 放行
+    if state.verify_iterations >= MAX_ITERATIONS:
+        return "layout"  # 超限 → 放行留痕
+    return "content"  # 有遗漏且未超限 → 回 content 补改
 
 
 def _route_after_human_gate(state: RewriteState) -> str:
@@ -83,6 +102,7 @@ def get_rewrite_graph() -> CompiledStateGraph:
         builder.add_node("cold_start", cold_start_node)
         builder.add_node("content", content_node)
         builder.add_node("validate_content", validate_content_node)
+        builder.add_node("verify_changes", verify_changes_node)
         builder.add_node("layout", layout_node)
         builder.add_node("validate", validate_node)
         builder.add_node("human_gate", human_gate_node)
@@ -103,6 +123,12 @@ def get_rewrite_graph() -> CompiledStateGraph:
         builder.add_conditional_edges(
             "validate_content",
             _route_after_validate_content,
+            {"verify_changes": "verify_changes"},
+        )
+        # 改动落实门（2026-09-28）：missed 非空且未超限 → 回 content 补改；否则往下走 layout。
+        builder.add_conditional_edges(
+            "verify_changes",
+            _route_after_verify_changes,
             {"content": "content", "layout": "layout"},
         )
         builder.add_edge("layout", "validate")

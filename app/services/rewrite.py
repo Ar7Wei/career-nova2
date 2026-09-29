@@ -121,6 +121,7 @@ async def generate_preview(user_request: str, target_role: str | None = None, ap
             await save_target_role(target_role)
         request = user_request
         applied_changes: set[tuple[int, int]] = set()
+        confirmed_text = ""
         if apply_confirmed:
             # 「开始改」：已确认改动记录渲染成指令文本，与用户原话拼接进同一 request 槽。
             confirmed = await list_change_records(active_only=True)
@@ -132,6 +133,9 @@ async def generate_preview(user_request: str, target_role: str | None = None, ap
             # 记下真进了图的子项：结清时只有这些标 applied（件 1）。随草稿过 checkpointer，
             # confirm 时从挂起态取回——与「挂起的到底是什么」同源，不额外存单例。
             applied_changes = _confirmed_change_ids(confirmed)
+            # 改动落实门（2026-09-28）：同一份 confirmed 清单也注入 state，供 verify_changes
+            # 节点逐条核对「新稿落实了没」——与进 user_request 的文本同源，不另造一份。
+            confirmed_text = changes_text
         doc = await latest_document()
         focus_role, preferences = await build_focus()
         state = RewriteState(
@@ -143,6 +147,7 @@ async def generate_preview(user_request: str, target_role: str | None = None, ap
             target_role=focus_role,  # 侧重信号（service 读方向槽位注入，Node 不碰 DB）
             preferences=preferences,  # 侧重信号（service 读 custom 偏好注入）
             applied_changes=sorted(applied_changes),  # 本版带了哪几条已确认改动（件 1）
+            confirmed_changes_text=confirmed_text,  # 本版待核对的 confirmed 清单（改动落实门用）
         )
         await run_preview(state)
 
@@ -164,6 +169,9 @@ async def generate_preview(user_request: str, target_role: str | None = None, ap
         if draft.content_problems:
             # 机器门超限残留：补不齐的交人门拍板（人门 payload 已带），这里只留痕。
             logger.info("rewrite_content_problems_unresolved", missing=len(draft.content_problems), iterations=draft.iterations)
+        if draft.missed_changes:
+            # 改动落实门超限残留：聊定了但补到上限还没落实，交人门知情拍板（payload 已带），留痕。
+            logger.info("rewrite_changes_unapplied", missed=len(draft.missed_changes), iterations=draft.iterations)
         logger.info("generate_preview_staged", cold_start=doc is None or not doc.resume_json.strip(), json_chars=len(draft.new_json))
         return draft.new_json, draft.new_html
 

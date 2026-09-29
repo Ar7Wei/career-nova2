@@ -25,6 +25,9 @@ with open(os.path.join(_PROMPTS_DIR, "rewrite_classify.md"), encoding="utf-8") a
 with open(os.path.join(_PROMPTS_DIR, "rewrite_content.md"), encoding="utf-8") as _f:
     _REWRITE_CONTENT_TEMPLATE = _f.read()
 
+with open(os.path.join(_PROMPTS_DIR, "rewrite_verify.md"), encoding="utf-8") as _f:
+    _REWRITE_VERIFY_TEMPLATE = _f.read()
+
 with open(os.path.join(_PROMPTS_DIR, "refine_direction.md"), encoding="utf-8") as _f:
     _REFINE_DIRECTION_TEMPLATE = _f.read()
 
@@ -128,6 +131,23 @@ def load_rewrite_classify_prompt(resume_json: str, user_request: str) -> str:
     return _REWRITE_CLASSIFY_TEMPLATE.format(
         resume_markdown=resume_json or "（暂无简历）",
         user_request=user_request,
+        language_instruction=_language_instruction(),
+    )
+
+
+def load_rewrite_verify_prompt(confirmed_changes: str, old_resume: str, new_resume: str, content_objection: str = "") -> str:
+    """加载改动落实核对 prompt（编辑流水线 verify_changes 节点，2026-09-28）。
+
+    confirmed_changes：本版带进图的已确认改动清单（target: original → suggested）。
+    old_resume/new_resume：改前/改后的简历 JSON——复核员逐条对「新稿落实了没」。
+    content_objection：上一轮 content 对复核判定的异议（「这条其实改了」）——复核据此仲裁，
+      成立的误判要撤销（2026-09-28 反驳机制）。
+    """
+    return _REWRITE_VERIFY_TEMPLATE.format(
+        confirmed_changes=confirmed_changes,
+        old_resume=old_resume or "（无旧稿）",
+        new_resume=new_resume,
+        content_objection=content_objection or "（出稿方无异议）",
         language_instruction=_language_instruction(),
     )
 

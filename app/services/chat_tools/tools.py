@@ -40,6 +40,7 @@ from app.services.market import query_market, render_market_snapshot
 from app.services.optimization import (
     _DECISION_TO_STATUS,
     _append_or_create_by_reason,
+    list_pending_change_lines,
     query_decisions,
     record_decision,
     set_change_item_status,
@@ -207,9 +208,10 @@ async def apply_suggestions_tool(brief: str = "") -> str:
     你想改时先调 `propose_execution(kind="apply")` 提案、用嘴问用户；用户回话后，
     下一轮才能调本工具——否则会被系统拒绝。
 
-    前置门控（由你负责把关）：
-    - 还有「待定」改动点 → **先别改**，逐条念给用户、用 set_change_status 清掉待定，清空后再问。
-    - 只有「正在聊」未结论 → 口头交代「这几条这轮先不带上（会留到下一版）」再改。
+    前置门控（**代码强制**，不是建议）：
+    - 还有「待定（pending）」改动点 → **系统直接拦下本工具**，把待定点念回给你。先逐条跟用户过完
+      （聊透的 `set_change_status(accept)`、不要的 `reject`、这轮先不带的 `discuss` 并口头交代），
+      清空后**重新提案**再调本工具。
     - 已确认数量 1~2 条 → 建议再攒攒（改一轮成本不低）；用户坚持就改。
 
     - brief（可选）：你组装的**完整指令**——这轮要干什么、怎么干、为什么、要遵守哪些决策
@@ -220,6 +222,20 @@ async def apply_suggestions_tool(brief: str = "") -> str:
     blocked = await execution_proposal.check("apply")
     if blocked is not None:
         return blocked
+    # 甲（代码兜底）：还有「没聊」的 pending 改动点 → 拦回去。
+    # 乙道（提案清单）让 agent 看得见「哪些点会被落下」，但拦不住它「看见了照样跳过」——
+    # 这道在执行那一刻把「还有 pending」变成硬拦，逼它先逐条过完（或显式转 discussing 留下）再出稿。
+    pending_lines = await list_pending_change_lines()
+    if pending_lines:
+        execution_proposal.clear()  # 消费掉提案——拦阻后 agent 得先把待定过完、再重新提案
+        listing = "\n".join(f"{i}. {ln}" for i, ln in enumerate(pending_lines, start=1))
+        return (
+            f"还有 {len(pending_lines)} 条改动点没聊定（待定），**先别改**，逐条跟用户过完再出稿：\n"
+            f"{listing}\n\n"
+            "逐条处理：聊透、用户给了确定口吻的 → `set_change_status(accept)` 标已确认（这版带走）；"
+            "明确不要的 → `reject`；还没聊到、这轮先不带的 → `discuss`（在聊，留到下一轮，"
+            "并口头交代「这几条这轮先不带」）。**待定清空后重新提案、再调本工具**。"
+        )
     try:
         await generate_preview(user_request=brief or "应用已确认的改动", apply_confirmed=True)
     except ConflictError as e:

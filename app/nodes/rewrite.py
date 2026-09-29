@@ -22,7 +22,7 @@ from collections.abc import Awaitable, Callable
 from langgraph.graph.state import Command
 from langgraph.types import interrupt
 
-from app.agents.rewrite import run_classify_agent, run_content_agent
+from app.agents.rewrite import run_classify_agent, run_content_agent, run_verify_changes_agent
 from app.core.logging import logger
 from app.schemas.resume import resume_from_json
 from app.schemas.rewrite import RewriteState
@@ -78,15 +78,30 @@ async def content_node(state: RewriteState) -> Command:
     # 人门 revise 回边（feedback 非空）优先于首轮 intent：用户对人门草稿拍了「带意见重改」，
     # 本轮修改请求 = feedback——即使首轮是 layout 意图（content 原样透传过），这条意见也要照改，
     # 否则 feedback 会被 intent 守卫静默吞掉（改了个寂寞，再挂人门还是同一版）。
-    if state.feedback or intent.text in ("content", "both"):
-        # 人门 feedback 当本轮修改请求（用户的主观意见，区别于已停用的机器门硬性补回清单）。
-        request = state.feedback or intent.content_request or state.user_request
+    if state.feedback or state.missed_changes or intent.text in ("content", "both"):
+        # 改动落实门回边（missed_changes 非空）优先级最高：这是机器判出的「聊定了但没落实」的
+        # 硬缺漏，本轮必须把这几条补改进去——渲染成具体指令（缺哪条、该改成什么、现在是什么样），
+        # 不是笼统的「你再改改」。其次才是人门 feedback / 首轮请求。
+        if state.missed_changes:
+            missed_lines = "\n".join(
+                f"- {m.target}：应改为「{m.suggested}」（现在还是：{m.note or '未改'}）" for m in state.missed_changes
+            )
+            request = (
+                f"以下几条改动是用户已确认要改、但你上一版没落实到位的，**这次必须改到**：\n{missed_lines}\n\n"
+                "如果你认为其中某条其实**已经改对了**（复核看错了），照样把它保持正确即可，并在 "
+                "objection 字段用一句话说明「这条无需再改，因为……」——你的异议会被复核再看一次。"
+                "真有遗漏的才动手改。\n\n"
+                f"在此基础上，其余部分保持不变。原始修改请求：{state.feedback or intent.content_request or state.user_request}"
+            )
+        else:
+            # 人门 feedback 当本轮修改请求（用户的主观意见，区别于已停用的机器门硬性补回清单）。
+            request = state.feedback or intent.content_request or state.user_request
         base_json = state.new_json or state.current_json
-        # 机器门回边已停（2026-09-23），没有「必须补回」的硬清单了。
-        new_json, summary = await run_content_agent(
+        # 事实覆盖门回边已停（2026-09-23），没有「必须补回事实」的硬清单了。
+        new_json, summary, objection = await run_content_agent(
             base_json, request, state.facts_text, state.target_role, state.preferences
         )
-        return Command(update={"new_json": new_json, "summary": summary, "iterations": state.iterations + 1})
+        return Command(update={"new_json": new_json, "summary": summary, "iterations": state.iterations + 1, "content_objection": objection})
     # 无内容优化（首轮 layout 且未 revise）：内容层不动（交接原 JSON 给渲染），不增量
     return Command(update={"new_json": state.current_json})
 
@@ -109,6 +124,37 @@ async def validate_content_node(state: RewriteState) -> Command:
     missing = find_missing_facts(state.facts_text, resume_from_json(json_text)) if json_text.strip() else []
     logger.info("rewrite_content_validated", missing=len(missing), iterations=state.iterations, enforced=False)
     return Command(update={"content_problems": missing})
+
+
+async def verify_changes_node(state: RewriteState) -> Command:
+    """改动落实门（2026-09-28）：逐条核对「已确认改动」在新稿里落实了没（LLM 语义复核）。
+
+    与上面的「事实覆盖门」是**两道不同的门**：那道管「资料集事实丢没丢」（判据糙、回边已停），
+    本门管「用户拍板要改的 confirmed 改动落实了没」——判据是 LLM 看结果不看字面，所以敢回边。
+
+    只在有 confirmed 改动（state.confirmed_changes_text 非空，即「开始改」apply_confirmed）时跑；
+    纯 generate / 口头改写没有 confirmed 清单可核 → missed 置空、不调用 LLM（不空转、不误拦）。
+    复核产物 missed_changes 写回 state：非空 → 路由回 content 补改；空 / 超限 → 往下走 layout。
+    """
+    if not state.confirmed_changes_text.strip():
+        return Command(update={"missed_changes": []})
+    old_json = state.current_json
+    new_json = state.new_json or state.current_json
+    result = await run_verify_changes_agent(state.confirmed_changes_text, old_json, new_json, state.content_objection)
+    logger.info(
+        "rewrite_changes_verify_node",
+        missed=len(result.missed),
+        skipped=len(result.skipped),  # 可核率信号：长期大量 skipped = 上游收录改动写得太虚
+        verify_iterations=state.verify_iterations,
+        had_objection=bool(state.content_objection),
+    )
+    # objection 一次性消费：本轮仲裁完就清掉，免得残留到下一轮复核被误读成「还有新异议」。
+    # 落实门回边预算走独立 verify_iterations（与人门 revise 的 iterations 分开，见路由注释）。
+    return Command(update={
+        "missed_changes": result.missed,
+        "content_objection": "",
+        "verify_iterations": state.verify_iterations + (1 if result.missed else 0),
+    })
 
 
 async def layout_node(state: RewriteState) -> Command:
@@ -148,7 +194,9 @@ async def human_gate_node(state: RewriteState) -> Command:
         "new_json": state.new_json,
         "new_html": state.new_html,
         "summary": state.summary,
-        "content_problems": state.content_problems,  # 机器门超限残留（补不齐的交人拍板）
+        "content_problems": state.content_problems,  # 事实门超限残留（补不齐的交人拍板）
+        # 改动落实门超限残留（2026-09-28）：聊定了但补到上限还没落实的改动，交人门知情拍板。
+        "missed_changes": [f"{m.target}：应改为「{m.suggested}」" for m in state.missed_changes],
     })
     decision = answer.get("decision", "") if isinstance(answer, dict) else str(answer)
     feedback = answer.get("feedback", "") if isinstance(answer, dict) else ""
