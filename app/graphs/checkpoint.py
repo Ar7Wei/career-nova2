@@ -1,7 +1,15 @@
 """统一持久化图基建：LangGraph checkpointer 装配 + thread_id 派生（ADR 0012）。
 
-改写（rewrite）与简历抽取（resume-parse）两条「挂起 → 人确认 → 重启恢复」链路共用
-同一套持久化编排基建，不各造一份。
+⚠️ **checkpointer 只给真正需要「中断 → 恢复」的图**（2026-09-29 收紧）。当前**只有
+`rewrite`** 用它——「跑图 → 挂起等人门确认 → 重启/回话后 resume」。**无中断的图不要挂**：
+
+- 挂了也没人读（结果直接返回调用方 / 落业务库），却会在 `checkpoints.db` 留下一串
+  永不清理的快照。
+- 若再用**静态** thread_id（如旧 `analysis:daily`、`resume-parse:current`），每次跑都往
+  同一个 thread 追加 → **只增不减**。实测：分析图因此积到 309,358 条 checkpoint +
+  972,268 条 writes（checkpoints.db 1.5GB 的全部来源），而 12 个 thread 里其余加起来
+  不到 1000 条。2026-09-29 已给 analysis / resume-parse 去掉 checkpointer。
+- 判据很简单：**这张图会不会 `interrupt` / 需要 `Command(resume=...)`？** 不会就别挂。
 
 - **checkpointer**：`langgraph-checkpoint-sqlite` 的 `AsyncSqliteSaver`（图走 ainvoke，
   用 async 版）。checkpoint 存**独立文件**（`checkpoints.db`），与业务库（`career_nova.db`）
@@ -9,6 +17,8 @@
   绑在一起。
 - **thread_id 派生式**：`{graph}:{scope}`（单用户同一时刻一条在途 → 单值），**不落库、
   不管理**。重启恢复 = 按固定规则查 checkpointer 有没有挂起的，查到就接着确认。
+  例：`rewrite:current`（挂起等人门）；`chat:{epoch}:{sid}`（对话记忆，按 session 分，
+  是真数据不是垃圾）。
 - **checkpointer 属编排基础设施，不违反「Graph 不碰 DB」红线**——它是编译时注入的编排
   设施，节点既不 import 也不调它；真正写业务库的仍是 service 层（见 docs/adr/0012）。
 

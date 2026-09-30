@@ -96,6 +96,14 @@ class RewriteState(BaseModel):
     # 两道门的「最大重试预算」是两件独立的事，共享会让人门 revise 吃掉落实门的补改预算（用户
     # 改几轮后落实门再想补，可能因 iterations 满了被直接放行，漏网的 confirmed 就这么进了人门）。
     verify_iterations: int = Field(default=0, description="改动落实门已回边补改过几轮（独立预算，MAX_ITERATIONS 兜底）")
+    # 结构完整性门（2026-09-30，两次「JSON 塌了渲染成代码」事故的根治）：content 产出后、渲染前，
+    # 校验 resume JSON 能不能干净解析成 Resume。判据确定性（pydantic 校验，不调 LLM、零误报），
+    # 与已停用的「事实覆盖门」（字面子串、误报罚改写）本质不同——所以这道门**敢回边**。
+    # structure_problems 非空 = 塌了（指得出塌在哪个字段），喂回 content 当补改指令。
+    structure_problems: list[str] = Field(default_factory=list, description="结构塌检测问题清单（非空 → 回边 content 重改）")
+    # 独立计数（与 verify_iterations / 人门 revise 的 iterations 都不共享，理由同 2026-09-29 拆分）：
+    # 结构门重试预算是第三件独立的事，共享会被人门 revise 或落实门挤占，把「塌了」漏进渲染。
+    structure_iterations: int = Field(default=0, description="结构门已回边重改过几轮（独立预算，MAX_ITERATIONS 兜底）")
     # 人门（ADR 0012，第 3 块）：human_gate 挂起等人拍板。decision=confirm→落库 / revise→带 feedback 回 content。
     decision: str = Field(default="", description="人门拍板：confirm|revise（Command(resume=) 恢复时写入）")
     feedback: str = Field(default="", description="人门修改意见（decision=revise 时，喂回 content 当本轮修改请求）")

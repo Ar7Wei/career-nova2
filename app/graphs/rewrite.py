@@ -21,6 +21,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
 from app.core.config import settings
+from app.core.errors import EmptyOutputError
 from app.core.logging import logger
 from app.graphs.checkpoint import get_checkpointer, graph_config, thread_id
 from app.nodes.rewrite import (
@@ -31,6 +32,7 @@ from app.nodes.rewrite import (
     layout_node,
     validate_content_node,
     validate_node,
+    validate_structure_node,
     verify_changes_node,
 )
 from app.schemas.rewrite import RewriteIntent, RewriteState
@@ -70,6 +72,22 @@ def _route_after_validate_content(state: RewriteState) -> str:
     return "verify_changes"
 
 
+def _route_after_validate_structure(state: RewriteState) -> str:
+    """结构完整性门路由（2026-09-30）：塌了未超限 → 回 content 重改；超限 → 抛错不渲染。
+
+    判据确定性（能不能干净解析成 Resume，pydantic 校验，零误报），与已停的「事实覆盖门」
+    （字面子串、误报罚改写）本质不同——所以这道门敢回边。两次真实事故（JSON 塌了渲染成代码）
+    的根治：塌了自动回边重出，超限抛 EmptyOutputError 出声让用户重试，**绝不进 layout 渲染**
+    （结构塌没有「勉强能看」的中间态，渲染出来就是一坨 JSON 代码）。
+    """
+    if not state.structure_problems:
+        return "validate_content"  # 结构完好 → 往下走事实覆盖门
+    if state.structure_iterations >= MAX_ITERATIONS:
+        # 超限：重出 MAX_ITERATIONS 轮还塌 → 显式失败（出声重试），不渲染坏结构进预览。
+        raise EmptyOutputError("这版简历的结构没出好（重试几次仍不完整）——请再试一次")
+    return "content"  # 塌了未超限 → 回 content 重出
+
+
 def _route_after_verify_changes(state: RewriteState) -> str:
     """改动落实门路由（2026-09-28）：missed 非空且未超限 → 回 content 补改；否则往下走 layout。
 
@@ -101,6 +119,7 @@ def get_rewrite_graph() -> CompiledStateGraph:
         builder.add_node("classify", classify_node)
         builder.add_node("cold_start", cold_start_node)
         builder.add_node("content", content_node)
+        builder.add_node("validate_structure", validate_structure_node)
         builder.add_node("validate_content", validate_content_node)
         builder.add_node("verify_changes", verify_changes_node)
         builder.add_node("layout", layout_node)
@@ -112,14 +131,21 @@ def get_rewrite_graph() -> CompiledStateGraph:
             _route_entry,
             {"cold_start": "cold_start", "classify": "classify"},
         )
-        # 冷启动生成的内容也要过机器门（覆盖校验）——与暖态 content 汇合进 validate_content。
-        builder.add_edge("cold_start", "validate_content")
+        # 冷启动生成的内容也要过结构门 + 事实门——与暖态 content 汇合进 validate_structure。
+        builder.add_edge("cold_start", "validate_structure")
         builder.add_conditional_edges(
             "classify",
             _route_after_classify,
             {END: END, "content": "content"},
         )
-        builder.add_edge("content", "validate_content")
+        # 结构完整性门（2026-09-30）：content 产出后第一道卡。塌了未超限回 content 重出，
+        # 超限抛 EmptyOutputError（不渲染代码进预览）；干净才往下走事实覆盖门。
+        builder.add_edge("content", "validate_structure")
+        builder.add_conditional_edges(
+            "validate_structure",
+            _route_after_validate_structure,
+            {"content": "content", "validate_content": "validate_content"},
+        )
         builder.add_conditional_edges(
             "validate_content",
             _route_after_validate_content,

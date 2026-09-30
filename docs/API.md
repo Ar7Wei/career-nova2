@@ -96,7 +96,12 @@
 > 面板读 `/optimization/records`，**逐条子项**改状态走 `/optimization/record/status`。旧的 `/pending`、`/accept`、`/reject`、`/discuss`、`/retract`、`/update` 六个端点随旧表停用一并删除。
 
 #### `GET /api/v1/optimization/records`
-读活跃改动记录（优化点面板展开时拉取；`kind` 可选过滤 `change`/`decision`）。
+读改动记录。`kind` 可选过滤 `change`/`decision`；`scope` 决定取哪些：
+- `scope=active`（默认）：只取**活跃**的（未结清）——优化点四栏面板（可操作）。
+- `scope=all`：取**全部**（含已结清）——**日志面板**（只读，看历史与跨版本决策）。
+
+> `scope=all` 是 2026-09-29 加的：跨版本决策此前在界面上**完全不可见**（四栏面板刻意跳过无子项的 `decision`），用户看不到自己被禁了什么、也没有解除入口。记录流面板是它的只读视图——决策是记录表、不是设置项，不给用户手动增删改。
+
 - 响应 `200` `ChangeRecordListResponse`：
   ```json
   {

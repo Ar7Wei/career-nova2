@@ -20,7 +20,7 @@
 | `chat_sessions` / `chat_messages` | 会话存储（每版本一 session，1.2/1.3 共享底座） | 已实现 |
 | `optimization_pending` | **旧**优化建议落库（**停用，待 DROP**）；仅投递页处方「改进」收录时读一条 `proposed` 行 | 停用 |
 | `change_records` | **改动记录**（原因 → 改动点复合）：优化点与用户决策记录合一，2026-09-23 取代简历侧 `optimization_pending` + `preferences(kind=custom)` | 已实现 |
-| `preferences` | 用户判定偏好（**停用，待 DROP**；「拒掉这一类」已改记为 `change_records(kind=decision)`） | 停用 |
+| `preferences` | 用户判定偏好（**停用，待 DROP**；拒绝项与自定义标准均并入 `change_records(kind=decision)`） | 停用 |
 | `jobs` | 岗位聚合（阶段二 v1：源岗位，同源幂等 upsert，跨源不去重） | 已实现 |
 | `job_followup_events` | 投递跟进状态时间线（单一状态线，时间线即真相；取代已作废的 `job_screening`） | 已实现（2026-08-30 定稿） |
 | `interviews` | 面试场次（一个岗位 0..N 场；日历数据源，编年可追溯） | 已实现（2026-08-31 定稿） |
@@ -181,10 +181,10 @@
 - **原因先行、子项后补**：`reason` 填、`changes=[]` 可先挂待定；聊定后填子项。
 - **同原因不重复**：新改动与已有活跃记录同因 → append 子项，不新开行。
 - **操作粒度 = 单条子项**：逐条 accept/reject/discuss/retract（`update_change_item_status`）。面板四栏按**子项状态**分栏；「开始改」按**子项**判据（有 confirmed 子项即可改，不等整条记录定论）。
-- **结清是子项级软标记**（`soft_settle_change_records`）：版本变更时 `confirmed` 子项 → `applied`、`pending`/`rejected` → `archived`，记录级 `archived` + 记 `resolved_in_document_id`。只剩 discussing 子项的记录**保持活跃**（留到下一版继续聊）。
-- **`applied` 只说「它 resolve 的那一版真应用了它」（2026-09-24）**：结清时按**本版真进了图的**改动点判——`generate_resume` 这条路**不带**已确认改动，它那批 confirmed 标 `archived`（结清未应用）而非 `applied`。旧实现不看带了什么、一律标 applied，新版开场引导（读该版 resolved 记录）就会谎报「这版做了这些调整」。**回滚不再走结清**（回滚 = 恢复快照，见 `resume_snapshots`），`discard` 分支随之删除。
-- **持久决策**：`kind=decision` 的活跃记录经 `build_decisions_text` 注入生成/改写 prompt（跨版本约束）；agent 用 `query_decisions` 查历史、改动前先查避免相悖。
-- **「拒掉这一类」偏好并入本表**：版本变更清掉 `rejected` 子项时，按 `type` 聚合记一条 `kind=decision` 记录（原因形如「拒掉这一类：quantify」）——不再单独写 `preferences` 表。
+- **结清是子项级软标记**（`soft_settle_change_records`）：版本变更时四种活跃子项**全部**迁移——`confirmed` → `applied`（真进图的）或 `archived`（未进图的）、**`rejected` → 保留 `rejected`**（2026-09-29：历史「拒过」要可查）、`pending`/`discussing` → `archived`；记录级 `archived` + 记 `resolved_in_document_id`。（2026-09-29 前 `discussing` 不结清、跨版本保留，已废。）
+- **`applied` 只说「它 resolve 的那一版真应用了它」（2026-09-24）**：结清时按**本版真进了图的**改动点判——`generate_resume` 这条路**不带**已确认改动，它那批 confirmed 标 `archived`（结清未应用）而非 `applied`。旧实现不看带了什么、一律标 applied，新版开场引导（读该版 resolved 记录）就会谎报「这版做了哪些调整」。**回滚不再走结清**（回滚 = 恢复快照，见 `resume_snapshots`），`discard` 分支随之删除。
+- **持久决策**：`kind=decision` 的记录经 `build_decisions_text` 注入生成/改写 prompt（跨版本约束）——**含已结清的**（`resolved_in_document_id` 对决策只是「在哪版兑现过」的记账，**不代表约束失效**；2026-09-29 前只看活跃，导致决策一结清就停止注入、每版要用户重说一遍）。agent 用 `query_decisions` 查历史、改动前先查避免相悖。
+- **禁用某一类 = 显式决定，不再自动聚合（2026-09-29）**：旧实现在版本变更清 `rejected` 时按 `type` 自动记一条「拒掉这一类：X」——前提是 reject 只来自用户鼠标，2026-08-25 agent 获得 reject 权后该前提失效（agent 把「本轮不带」落成 reject 就会替用户封整类）。现在**拒绝只关单条**；再拒到**同类**时由 agent 问用户「要不要以后这类都别提了」，用户点头才记一条**自然语言**的 `kind=decision`（如「不做量化建议」）。禁用不靠 `type`（粒度对不齐真实意图）。
 
 ### `optimization_pending`（**停用，待 DROP**）
 **旧优化建议落库**——建议组从「聊天暂存」升级为「落库对象」，完整状态机（2026-08-10 →）。**2026-09-23 起停用**：优化点统一到 `change_records`（原因 + 改动点复合表），本表**行留存不删**（供历史溯源），新代码不得再写。仅剩的一处读口是投递页处方「改进」收录时读一条 `proposed` 行、收录后把它软结清 `archived`。
@@ -212,30 +212,8 @@
 - **本表已停用**（2026-09-23）：优化点统一到 `change_records`。此处不再列旧状态机/结清/偏好规则——现行规则见下方 `change_records`。
 - **唯一活口**：投递页处方「改进」时读一条 `proposed` 行（`get_suggestion`）、收录后把它软结清 `archived`（`soft_settle_by_status`）。其余读写函数已随迁移删除。
 
-### `change_records`
-**改动记录**（原因 → 改动点复合，2026-09-23）——优化点与用户决策记录**合一**为一张表（照 `user_facts` 的 title+points 形状）。取代简历侧 `optimization_pending` + `preferences(kind=custom)`。
-
-| 列 | 类型 | 说明 |
-|---|---|---|
-| `id` | INTEGER PK | 自增 |
-| `reason` | TEXT | **改动原因（为什么）**——记录主体，一行一份、不重复（同原因 append 子项） |
-| `changes` | TEXT(JSON) | **改动点（改什么）**：`[{id, target, original, suggested, status}]`，**可空数组**（原因先行、子项后补）；子项 **id 记录内唯一 + 自带 status**（操作粒度 = 单条子项） |
-| `status` | TEXT（index） | 记录级兜底状态（子项全空时 / 整条存废）：pending/discussing/.../archived |
-| `kind` | TEXT（index） | `change` 本轮整改（用完即随版本结清）/ `decision` **跨版本持续决策**（每版注入生成/改写 prompt） |
-| `origin` | TEXT（index） | `agent` / `job_analysis` |
-| `session_id` | INTEGER（index） | 提出会话 |
-| `document_id` | INTEGER（index） | 基于哪版 |
-| `resolved_in_document_id` | INTEGER（index，可空） | 哪版被结清；NULL=活跃 |
-| `created_at` / `updated_at` | DATETIME | 时间戳 |
-
-设计要点：
-- **原因先行、子项后补**：`reason` 填、`changes=[]` 可先挂待定；聊定后填子项。
-- **同原因不重复**：新改动与已有记录同因 → append 子项，不新开行。
-- **操作粒度 = 单条子项**：逐条 accept/reject/discuss（`update_change_item_status`）。
-- **持久决策**：`kind=decision` 的活跃记录经 `build_decisions_text` 注入生成/改写 prompt（跨版本约束）；agent 用 `query_decisions` 查历史、改动前先查避免相悖。
-
 ### `preferences`（**停用，待 DROP**）
-**用户判定偏好**（拒绝项 + 自定义标准）——**2026-09-23 停用**：「拒掉这一类」改记为 `change_records` 的一条 `kind=decision` 记录（版本变更清 `rejected` 子项时按 `type` 聚合），自定义标准并入 `change_records(kind=decision)`。本表**行留存不删**，库中 `clear_all_preferences`（核爆）仍会清空它。
+**用户判定偏好**（拒绝项 + 自定义标准）——**2026-09-23 停用**：两者都并入 `change_records(kind=decision)`（拒绝项与自定义标准本是一正一反，同一对象）。**类别禁用不再自动产生**（2026-09-29 拆掉按 `type` 聚合——详见 `change_records` 一节），改由用户在拒绝时显式决定。本表**行留存不删**，库中 `clear_all_preferences`（核爆）仍会清空它。
 
 | 列 | 类型 | 说明 |
 |---|---|---|

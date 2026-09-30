@@ -1800,3 +1800,130 @@
   width: 110px;
   flex: none;
 }
+
+/* ===== 决策·记录流面板（只读，2026-09-29）=====
+   与优化点面板的分工：优化点 = 待处理条目（可操作、随版本结清）；
+   本面板 = 全量记录流（历史 + 决策），只读——决策是记录表，不给用户手动增删改。 */
+.decision-panel {
+  width: 560px;
+  height: 70vh;
+  overflow: hidden;
+  z-index: 60; /* 与优化点/资料集同层，盖过聊天输入框 */
+}
+.decision-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 0;
+  position: relative; /* BusyOverlay 的定位上下文 */
+}
+.decision-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.decision-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-muted);
+}
+.decision-section-count {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  color: var(--color-muted);
+}
+.decision-section-empty {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  padding: var(--space-2) 0;
+}
+/* 一条记录：原因 + 其下改动点 */
+.decision-record {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border-light);
+  background: var(--color-soft);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+/* 已结清（历史）：弱化，不当活跃内容读 */
+.decision-record.settled {
+  opacity: 0.62;
+}
+.decision-record-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+}
+.decision-record-reason {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.decision-record-version {
+  flex: none;
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+}
+.decision-record-status,
+.decision-change-status {
+  flex: none;
+  font-size: var(--font-size-xs);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-soft);
+  color: var(--color-muted);
+}
+/* 定论态用状态底色（12~18% 透明，见 docs/frontend-styles.md） */
+.decision-record-status.st-confirmed,
+.decision-change-status.st-confirmed,
+.decision-change-status.st-applied {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+.decision-record-status.st-pending,
+.decision-change-status.st-pending,
+.decision-change-status.st-discussing {
+  background: var(--color-info-soft);
+  color: var(--color-info);
+}
+/* 改动点行：类型徽标 + 原文 → 新改法 + 状态 */
+.decision-change {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  padding-left: var(--space-2);
+  color: var(--color-ink);
+}
+.decision-change-type {
+  flex: none;
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+}
+.decision-change-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.decision-change-original {
+  text-decoration: line-through;
+  color: var(--color-muted);
+}
+.decision-change-arrow {
+  margin: 0 var(--space-1);
+  color: var(--color-muted);
+}

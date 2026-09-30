@@ -19,6 +19,7 @@ from app.schemas.optimization import (
 )
 from app.services.optimization import (
     _ensure_not_applying,
+    all_change_records,
     pending_records,
     promote_suggestion,
     set_change_item_status,
@@ -29,11 +30,18 @@ router = APIRouter()
 
 
 @router.get("/optimization/records", response_model=ChangeRecordListResponse)
-async def records(kind: str | None = None) -> ChangeRecordListResponse:
-    """读活跃改动记录（原因 + 改动点）。kind 可选过滤（change/decision）。"""
-    all_records = await pending_records()
-    if kind is not None:
-        all_records = [r for r in all_records if r.kind == kind]
+async def records(kind: str | None = None, scope: str = "active") -> ChangeRecordListResponse:
+    """读改动记录（原因 + 改动点）。kind 可选过滤（change/decision）。
+
+    - `scope=active`（默认）：只取活跃的——优化点四栏面板（可操作）。
+    - `scope=all`：取**全部**（含已结清）——记录流面板（只读，看历史与跨版本决策）。
+    """
+    if scope == "all":
+        all_records = await all_change_records(kind=kind)
+    else:
+        all_records = await pending_records()
+        if kind is not None:
+            all_records = [r for r in all_records if r.kind == kind]
     return ChangeRecordListResponse(records=all_records)
 
 

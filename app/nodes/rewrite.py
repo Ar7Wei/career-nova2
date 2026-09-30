@@ -21,6 +21,7 @@ from collections.abc import Awaitable, Callable
 
 from langgraph.graph.state import Command
 from langgraph.types import interrupt
+from pydantic import ValidationError
 
 from app.agents.rewrite import run_classify_agent, run_content_agent, run_verify_changes_agent
 from app.core.logging import logger
@@ -78,11 +79,22 @@ async def content_node(state: RewriteState) -> Command:
     # 人门 revise 回边（feedback 非空）优先于首轮 intent：用户对人门草稿拍了「带意见重改」，
     # 本轮修改请求 = feedback——即使首轮是 layout 意图（content 原样透传过），这条意见也要照改，
     # 否则 feedback 会被 intent 守卫静默吞掉（改了个寂寞，再挂人门还是同一版）。
-    if state.feedback or state.missed_changes or intent.text in ("content", "both"):
-        # 改动落实门回边（missed_changes 非空）优先级最高：这是机器判出的「聊定了但没落实」的
+    if state.feedback or state.missed_changes or state.structure_problems or intent.text in ("content", "both"):
+        # 结构塌回边（structure_problems 非空）优先级最高：上一版产出根本无法解析/渲染，
+        # 本轮不是「优化」而是「重出一份结构完好的」——明确告诉它塌在哪、必须出合法结构。
+        if state.structure_problems:
+            collapsed_lines = "\n".join(f"- {p}" for p in state.structure_problems)
+            request = (
+                f"你上一版输出的简历 JSON 结构塌了，无法解析渲染：\n{collapsed_lines}\n\n"
+                "这次**必须**输出结构完整、合法的简历 JSON：basics 是对象、work/education/skills/projects "
+                "等是对象数组（每项都是对象，不是字符串）、字段类型正确。"
+                "内容语义保持不变，只把结构修正成合法形态。\n\n"
+                f"原始修改请求：{state.feedback or intent.content_request or state.user_request}"
+            )
+        # 改动落实门回边（missed_changes 非空）优先级其次：这是机器判出的「聊定了但没落实」的
         # 硬缺漏，本轮必须把这几条补改进去——渲染成具体指令（缺哪条、该改成什么、现在是什么样），
         # 不是笼统的「你再改改」。其次才是人门 feedback / 首轮请求。
-        if state.missed_changes:
+        elif state.missed_changes:
             missed_lines = "\n".join(
                 f"- {m.target}：应改为「{m.suggested}」（现在还是：{m.note or '未改'}）" for m in state.missed_changes
             )
@@ -101,9 +113,59 @@ async def content_node(state: RewriteState) -> Command:
         new_json, summary, objection = await run_content_agent(
             base_json, request, state.facts_text, state.target_role, state.preferences
         )
-        return Command(update={"new_json": new_json, "summary": summary, "iterations": state.iterations + 1, "content_objection": objection})
+        # structure_problems 一次性消费：本轮补改完就清掉，下轮 validate_structure 重新检测——
+        # 不残留到下一轮被误读成「还塌着」。
+        return Command(update={"new_json": new_json, "summary": summary, "iterations": state.iterations + 1, "content_objection": objection, "structure_problems": []})
     # 无内容优化（首轮 layout 且未 revise）：内容层不动（交接原 JSON 给渲染），不增量
     return Command(update={"new_json": state.current_json})
+
+
+async def validate_structure_node(state: RewriteState) -> Command:
+    """结构完整性门（2026-09-30）：content 产出后、渲染前，校验 resume JSON 没塌。
+
+    判据 = 能不能干净 `resume_from_json`（确定性 pydantic 校验，不调 LLM、零误报）。
+    「硬塌」——work 元素是 str、basics 是 str、work 非 list、顶层非 dict——pydantic 无法归一，
+    `model_validate_json` 直接抛 ValidationError（实测：extra:"ignore" 只会让「软塌/字段异名」
+    静默丢空，那种由 content 的全空守卫拦；真正漏网、渲染成代码的就是这里的硬塌）。
+
+    干净 → structure_problems 置空、不耗预算；塌 → 记下塌在哪个字段 + structure_iterations+1，
+    供路由回边 content 补改（超限由路由抛 EmptyOutputError，不渲染）。
+    """
+    json_text = state.new_json or state.current_json
+    try:
+        resume_from_json(json_text)
+    except ValueError as e:
+        problems = _collapse_locations(e)
+        logger.info("rewrite_structure_collapsed", problems=problems, structure_iterations=state.structure_iterations)
+        return Command(update={
+            "structure_problems": problems,
+            "structure_iterations": state.structure_iterations + 1,
+        })
+    logger.info("rewrite_structure_ok", structure_iterations=state.structure_iterations)
+    return Command(update={"structure_problems": [], "structure_iterations": state.structure_iterations})
+
+
+def _collapse_locations(error: ValueError) -> list[str]:
+    """从 pydantic ValidationError 提取「塌在哪个字段」的可读清单（供 content 定位补改）。
+
+    取每条错误的 loc（如 work.0 / basics）拼成「work[0] 不是合法对象」式描述；提取失败兜底
+    一句通用描述，绝不因格式化再抛一次（这里是错误处理路径，自己不能崩）。
+    """
+    try:
+        if not isinstance(error, ValidationError):
+            return [f"resume JSON 无法解析：{str(error)[:120]}"]
+        problems: list[str] = []
+        for err in error.errors()[:5]:  # 最多列 5 条，防一份全塌的稿子刷几十条
+            loc = ".".join(str(p) for p in err.get("loc", ()))
+            label = loc or "顶层"
+            # work.0 → work[0]，更贴近 content 补改时的定位习惯
+            if "." in label:
+                head, *rest = label.split(".")
+                label = head + "".join(f"[{p}]" if p.isdigit() else f".{p}" for p in rest)
+            problems.append(f"{label} 结构塌了（{err.get('msg', '类型不符')}）")
+        return problems or ["resume JSON 结构不完整"]
+    except Exception:  # noqa: BLE001 - 错误格式化路径自身绝不抛
+        return ["resume JSON 结构不完整"]
 
 
 async def validate_content_node(state: RewriteState) -> Command:

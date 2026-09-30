@@ -124,12 +124,90 @@ async def query_decisions(keyword: str = "") -> str:
     return "\n".join(lines)
 
 
+_STOPWORDS = frozenset(
+    "的 了 和 与 及 或 在 是 有 为 对 把 被 让 从 到 向 于 以 并 等 都 也 还 就 而 中 上 下 一个 我们 你 我".split()
+)
+
+
+def _char_ngrams(text: str, n: int = 3) -> set[str]:
+    """CJK 字符 n-gram（无分词依赖的粗粒度实词提取）。
+
+    刻意**不用空格切词**——中文与英文/术语混排时（"采用 AI 辅助编程（Claude Code / vibe coding）工作流"），
+    空格切出来的是整串，永远比不中。字符 n-gram 在中文短短语上的召回足够，且零依赖。
+    """
+    chars = [ch for ch in text if not ch.isspace()]
+    if len(chars) < n:
+        return {"".join(chars)} if chars else set()
+    return {"".join(chars[i : i + n]) for i in range(len(chars) - n + 1)}
+
+
+def _salient_words(*texts: str) -> set[str]:
+    """从若干段文本提取可比对的实词特征（字符 n-gram 去掉纯停用词片段）。"""
+    words: set[str] = set()
+    for t in texts:
+        if not t:
+            continue
+        words |= {g for g in _char_ngrams(t) if g not in _STOPWORDS}
+    return words
+
+
+async def find_similar_rejections(record_id: int, change_id: int) -> str:
+    """拒绝一条改动点时，查历史有没有**类似的被拒条目**——有则提示 agent 问用户是否永久禁用。
+
+    取代旧的「按 type 自动聚合封类」（2026-09-29 拆除）：旧机制替用户做类别级决定，且前提
+    （reject 只来自用户鼠标）在 agent 拿到 reject 权后已失效。新机制把决定权交回用户：
+    **再拒到同类时问一次**「上次也拒过，要不要以后这类都别提了？」——用户点头才记 decision。
+
+    判据（刻意保守，宁漏勿误报）：
+    - 历史只认**用户明确拒过**的（`status == "rejected"`）。结清时 rejected 状态被保留
+      （见 `soft_settle_change_records`），所以跨版本可查；pending/confirmed 不算。
+    - **排掉正在被拒的这条自己**（record_id, change_id）。
+    - type 必须相同（粗筛）+ 实词与当前条目有交集（细筛）。
+
+    返回给 agent 的可读提示；无相似 → 空串（正常放行，不打扰）。
+    """
+    current = await get_change_record(record_id)
+    if current is None:
+        return ""
+    target_item = next((c for c in current.changes if c.id == change_id), None)
+    if target_item is None:
+        return ""
+
+    words = _salient_words(target_item.original, target_item.suggested)
+    hits: list[str] = []
+    for r in await list_change_records():
+        for c in r.changes:
+            if c.status != "rejected":
+                continue
+            if r.id == record_id and c.id == change_id:
+                continue  # 排掉自己
+            if c.type != target_item.type:
+                continue
+            if words and not (words & _salient_words(c.original, c.suggested)):
+                continue
+            hits.append(f"#{r.id}（{c.target or r.reason}）：{c.original} → {c.suggested}")
+    if not hits:
+        return ""
+
+    listed = "\n".join(f"  - {h}" for h in hits)
+    return (
+        f"\n\n⚠️ 这条与你历史上拒过的条目相似（同类 {target_item.type}）：\n{listed}\n"
+        "**问用户一句**：「上次也拒过类似的，要不要以后这类都别提了？」"
+        "——用户点头才记决策；说「就这条」就不记（别自作主张替用户封类）。"
+    )
+
+
 async def build_decisions_text() -> str:
     """把「持续生效的决策记录」（kind=decision）渲染成注入文本，喂生成/改写 prompt 的 {preferences}。
 
-    只取活跃（未结清）的 decision——它们是跨版本约束（如"不要项目经历栏，并进工作经历"）。
+    ⚠️ **含已结清的 decision**（2026-09-29 修复）：decision 的 `resolved_in_document_id`
+    只表示「这条在哪版兑现过」（记账），**不代表约束失效**——用户拍的板是跨版本持续生效的。
+    旧实现 `active_only=True` 只取活跃，导致**有子项的 decision 在版本变更后被当成「已结清」
+    而停止注入**：本仓 5 条真决策（工作经历退为时间线 / 项目前置 / 不罗列技术栈…）全是这个下场，
+    生成时 `{preferences}` 恒为空、每版都要用户重新说一遍。
+    这与 `render_records_panel` 的既有口径**必须一致**（那里 2026-09-23 已修，这里漏了）。
     """
-    records = await list_change_records(kind="decision", active_only=True)
+    records = await list_change_records(kind="decision")
     if not records:
         return ""
     return "\n".join(f"- {r.reason}" for r in records)
@@ -196,11 +274,18 @@ async def set_change_item_status(record_id: int, change_id: int, status: str) ->
     - **用户入口**（面板 URL）撞锁要抛 409——由路由层先调 `_ensure_not_applying()`。
     - **agent 工具**路径不抛，返回可读反馈让 agent 转述（工具层是这么调的）。
     本函数走后者（不抛）；抛的那条由路由层的 guard 负责（见 `app/api/v1/optimization.py`）。
+
+    **拒绝时附查历史**（2026-09-29）：标成 rejected 后，查有没有类似的历史拒绝——
+    有就追加一句提示，让 agent 问用户「要不要以后这类都别提了」。这是「类别禁用」的
+    唯一入口（旧的自动聚合已拆），决定权在用户。
     """
     ok = await update_change_item_status(record_id, change_id, status)
     if not ok:
         return f"改动记录 #{record_id} 的子项 #{change_id} 不存在。"
-    return f"改动点 #{record_id}.{change_id} 已标为 {status}。"
+    result = f"改动点 #{record_id}.{change_id} 已标为 {status}。"
+    if status == "rejected":
+        result += await find_similar_rejections(record_id, change_id)
+    return result
 
 
 async def set_record_status(record_id: int, status: str) -> str:
@@ -215,6 +300,16 @@ async def set_record_status(record_id: int, status: str) -> str:
 async def pending_records(*, origin: str | None = None) -> list[ChangeRecord]:
     """读当前活跃（未结清）的改动记录，供面板/渲染。origin 可选过滤（agent/job_analysis）。"""
     return await list_change_records(origin=origin, active_only=True)
+
+
+async def all_change_records(*, kind: str | None = None) -> list[ChangeRecord]:
+    """读**全部**改动记录（含已结清、含决策）——记录流面板（只读）用（2026-09-29）。
+
+    与 `pending_records`（只取活跃，供四栏操作面板）相对：这个是**全量历史视图**，
+    让用户看见 agent 的工作底稿与跨版本决策（含「不做 X」这类负向约束）。
+    只读——决策不给用户手动增删改（它是记录表，不是设置项）。
+    """
+    return await list_change_records(kind=kind)
 
 
 async def count_open_records() -> int:
@@ -301,10 +396,19 @@ async def clear_settled_for_new_version(
     ⚠️ **只服务于「生成确认 / 开始改」**（2026-09-24）：**回滚不走这里**——回滚 = 整份恢复
     目标版开始时的工作台快照（资料集 + 改动记录一起换回），没有"结清"这一步。
 
-    - **保留 discussing**：聊一聊的内容留到下一版本继续聊（是否适合新版由用户判断）。
-    - **结清 pending / confirmed / rejected**：定论项锚在旧稿上，版本变更即脱锚。
-    - 清空时**延迟记录最终被拒类别的偏好**（拒绝不即时记——撤回后不算"这一类"；
-      rejected 子项按 kind=decision 记一条「拒掉这一类」决策，跨版本注入）。
+    ⚠️ **2026-09-29 起不再自动记「拒掉这一类」决策**：旧实现把结清的 rejected 子项
+    **按 type 聚合**成一条 `kind=decision` 的类别封杀（"拒掉这一类：word_choice"），
+    跨版本注入进而压制整类建议。它的前提是「reject 只能来自用户鼠标」——2026-08-25
+    §12.6 把 reject 开放给 agent 后，这个前提失效：agent 在出稿闸门下把「本轮不带」
+    落成 reject，系统就替用户封了整类（word_choice 事故即由此而来，用户从未表过态）。
+    现在**由用户在拒绝时显式决定**是否永久禁用（见 `find_similar_rejections` /
+    `set_change_status` 工具回执）；系统不再替用户做类别级决定。禁用的载体是
+    **decision 的自然语言 reason**，不是 type（type 粒度对不齐真实意图）。
+
+    - **结清 pending / confirmed / rejected / discussing**（2026-09-29 起 discussing 也结清）：
+      定论项锚在旧稿上，版本变更即脱锚。
+      ~~保留 discussing~~（2026-08-12 旧策略）已废——出稿后内容变了，旧讨论锚在旧文本上多半
+      失效；「本轮不带」的语义现在由 reject 承担（reject 已无永久后果）。
 
     2026-08-20 大雷修复：结清从**物理删除**改为**软标记 + 全留存**——
     confirmed→applied、pending/rejected→archived，记 `resolved_in_document_id=new_document_id`
@@ -320,23 +424,18 @@ async def clear_settled_for_new_version(
     返回结清行数统计 {pending, confirmed, rejected}（供日志/事件文案）。
     """
     records = await pending_records()
-    rejected: list[tuple[str, str]] = []  # (改哪类, 改法) —— 记偏好用
-    counts = {"pending": 0, "confirmed": 0, "rejected": 0}
+    counts = {"pending": 0, "confirmed": 0, "rejected": 0, "discussing": 0}
     for r in records:
         for c in r.changes:
             if c.status in counts:
                 counts[c.status] += 1
-                if c.status == "rejected":
-                    rejected.append((c.type, c.suggested))
     # 软结清（子项级状态迁移 + 记录记 resolved_in_document_id）
     # applied_changes 必须透传：没进图的 confirmed 不许标 applied（件 1，2026-09-24）。
-    await soft_settle_change_records({"pending", "confirmed", "rejected"}, new_document_id, included=applied_changes)
-    # 延迟记偏好：结清的 rejected 按改哪类聚合（同类只记一条），作为跨版本决策注入。
-    by_type: dict[str, str] = {}
-    for type_, suggested in rejected:
-        by_type.setdefault(type_, suggested)
-    for type_, _suggested in by_type.items():
-        await record_change(f"拒掉这一类：{type_}", kind="decision")
-        logger.info("preference_recorded_on_version_change", scope=type_)
+    # discussing 也收进门（2026-09-29）：出稿后旧讨论锚在旧文本上，不再跨版本保留。
+    # 四种活跃状态全在集合里 → 不存在「部分命中」导致记录半结清的孤儿 bug（旧版
+    # discussing 不在集合、但 pending 命中会把整条记录标 resolved，discussing 跟着消失）。
+    await soft_settle_change_records(
+        {"pending", "confirmed", "rejected", "discussing"}, new_document_id, included=applied_changes
+    )
     return counts
 

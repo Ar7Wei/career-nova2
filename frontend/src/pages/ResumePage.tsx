@@ -5,6 +5,7 @@ import { notifications } from '@mantine/notifications'
 import { ChatPanel } from '@/components/chat/ChatPanel'
 import { ExtractCard } from '@/components/chat/ExtractCard'
 import { SuggestionBasket } from '@/components/chat/SuggestionBasket'
+import { DecisionPanel } from '@/components/chat/DecisionPanel'
 import { EditPanel } from '@/components/EditPanel'
 import { ExportMenu } from '@/components/ExportMenu'
 import { FactsPanel } from '@/components/FactsPanel'
@@ -441,6 +442,10 @@ export function ResumePage() {
               </PanelErrorBoundary>
               <PanelErrorBoundary name={t('resume.factsPanel')}>
                 <FactsPanel />
+              </PanelErrorBoundary>
+              {/* 决策·记录流（只读，2026-09-29）：看历史与跨版本决策——此前在界面上完全看不见 */}
+              <PanelErrorBoundary name={t('resume.decisionPanel')}>
+                <DecisionPanel />
               </PanelErrorBoundary>
             </div>
           }

@@ -20,7 +20,6 @@ from langgraph.graph.state import CompiledStateGraph
 
 from app.core.config import settings
 from app.core.logging import logger
-from app.graphs.checkpoint import get_checkpointer, graph_config
 from app.nodes import analysis as analysis_nodes
 from app.nodes.analysis import (
     analyze_node,
@@ -51,7 +50,7 @@ def get_analysis_graph() -> CompiledStateGraph:
         builder.add_edge("compute_stats", "analyze")
         builder.add_edge("analyze", "persist")
         builder.add_edge("persist", END)
-        _graph = builder.compile(name=f"{settings.PROJECT_NAME} analysis", checkpointer=get_checkpointer())
+        _graph = builder.compile(name=f"{settings.PROJECT_NAME} analysis")
         logger.info("graph_created", graph_name=_graph.name)
     return _graph
 
@@ -78,7 +77,12 @@ async def run_analysis(
     if load_daily is not None:
         analysis_nodes.load_daily_fn = load_daily
     graph = get_analysis_graph()
-    result = await graph.ainvoke(state, config=graph_config("analysis", state.scope))
+    # **不带 checkpointer**（2026-09-29）：分析图是线性图、无中断（没有人门/无 resume 需求），
+    # 结果由 persist 节点落业务库（analysis_reports）。旧实现挂了 checkpointer、thread_id 用
+    # `analysis:{scope}`（**静态**，daily 每天复用同一个）→ 每跑一次就往同一 thread 追加，
+    # 永不清理：实测累积 309,358 条 checkpoint + 972,268 条 writes（checkpoints.db 1.5GB 的
+    # 全部来源；12 个 thread 里其余加起来不到 1000 条）。去掉后不再产生任何死重量。
+    result = await graph.ainvoke(state)
     return AnalysisState(**result)
 
 

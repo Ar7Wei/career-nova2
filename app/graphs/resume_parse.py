@@ -7,12 +7,12 @@
 
 import asyncio
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from app.core.config import settings
 from app.core.logging import logger
-from app.graphs.checkpoint import get_checkpointer, graph_config
 from app.nodes import extract_facts_node
 from app.schemas.facts import ExtractedFacts, ParseCoverage
 from app.schemas.resume_graph import ResumeParseState
@@ -32,8 +32,12 @@ def get_resume_parse_graph() -> CompiledStateGraph:
         builder.add_node("extract_facts", extract_facts_node)
         builder.set_entry_point("extract_facts")
         builder.set_finish_point("extract_facts")
-        # 统一持久化图基建（ADR 0012）：编译时注入 checkpointer（未装配时为 None，图内存跑）。
-        _graph = builder.compile(name=f"{settings.PROJECT_NAME} resume-parse", checkpointer=get_checkpointer())
+        # **不带 checkpointer**（2026-09-29）：单节点直链图、无中断（人确认走聊天里的
+        # ExtractCard，不经图 resume），结果直接返回调用方。旧实现挂了 checkpointer 且
+        # thread_id 是静态的 `resume-parse:current` → 每次上传都往同一 thread 追加、永不清理
+        # （同 analysis 图那个 1.5GB 膨胀的成因，只是量小）。**checkpointer 只给真正需要
+        # 「中断 → 恢复」的图**（当前仅 rewrite：挂起等人门确认）。
+        _graph = builder.compile(name=f"{settings.PROJECT_NAME} resume-parse")
         logger.info("graph_created", graph_name=_graph.name)
     return _graph
 
@@ -45,9 +49,10 @@ async def parse(resume_markdown: str, cancel_event: asyncio.Event | None = None)
     """
     graph = get_resume_parse_graph()
     state = ResumeParseState(resume_markdown=resume_markdown)
-    config = graph_config("resume-parse")
-    if cancel_event is not None:
-        config["configurable"][_CANCEL_EVENT_CONFIG_KEY] = cancel_event
+    # 无 checkpointer → 无 thread_id（图内存跑）。cancel_event 仍经 configurable 传进节点。
+    config: RunnableConfig = (
+        {"configurable": {_CANCEL_EVENT_CONFIG_KEY: cancel_event}} if cancel_event is not None else {}
+    )
     result = await graph.ainvoke(state, config=config)
     return ExtractedFacts(
         facts=result["facts"],

@@ -297,9 +297,16 @@ async def soft_settle_change_records(
 ) -> list[ChangeRecordSchema]:
     """版本变更统一结清（软标记）：活跃记录的**子项**按状态迁移 + 记录级 archived + 记 resolved_in_document_id。
 
-    **子项级迁移**（2026-09-23，与「操作粒度 = 单条子项」对齐）：面板/agent 是在子项上操作的，
-    故结清也必须逐子项——confirmed 子项 → applied（这版真应用了它），pending/rejected → archived。
-    记录本身也标 archived（整条脱离活跃集）。
+    这是**软标记**，不是删除：行全留存，供「这版改了哪些点」回查（§11.8）。子项级状态迁移表：
+
+    | 进入时 | 迁到 | 含义 |
+    |---|---|---|
+    | confirmed | `applied` | 本版真进了图（见下 included） |
+    | confirmed | `archived` | 被结清但没进图 |
+    | rejected | **`rejected`（保留）** | 用户当初拒过——历史留痕，供「再拒同类时问是否永久禁用」（2026-09-29） |
+    | pending / discussing | `archived` | 没定论就随版本出清 |
+
+    记录本身一律标 `archived` + 记 `resolved_in_document_id`（整条脱离活跃集）。
 
     **included（件 1，2026-09-24）**：本版**真进了图**的已确认改动点 `{(record_id, change_id)}`——
     confirmed 子项只有在集合里才标 `applied`，不在就标 `archived`。`applied` 的字面语义是
@@ -310,7 +317,7 @@ async def soft_settle_change_records(
     ⚠️ **本函数只服务于「生成确认 / 开始改」**（前向版本变更）。**回滚不走这里**（2026-09-24）：
     回滚 = 整份恢复目标版开始时的工作台快照，改动记录连状态一起换回——旧的 `discard` 分支已删。
 
-    只结清活跃（resolved IS NULL）的；返回结清前快照（供 service 计数 / 记"拒掉这一类"）。
+    只结清活跃（resolved IS NULL）的；返回结清前快照（供 service 计数）。
     """
     async with async_session_maker() as session:
         stmt = select(ChangeRecord).where(ChangeRecord.resolved_in_document_id.is_(None))  # type: ignore[union-attr]
@@ -329,10 +336,16 @@ async def soft_settle_change_records(
                     # 没带进图的 confirmed 是「被结清但未应用」——跟 pending/rejected 同一下场。
                     took_it = included is None or (row.id or 0, int(it.get("id", 0))) in included
                     it["status"] = "applied" if took_it else "archived"
+                elif st == "rejected":
+                    # **保留 rejected 不压弯**（2026-09-29）：历史「拒过」要可查——用户再次拒到
+                    # 同类时，系统要能问「上次也拒过，要不要永久禁掉」。旧实现把 rejected 和
+                    # pending 一律压成 archived，「用户拒过」与「没聊完被搁置」就分不出来了。
+                    # 记录级仍标 resolved（脱锚），子项级状态表达的是「当初为什么结束」。
+                    it["status"] = "rejected"
                 else:
                     it["status"] = "archived"
             if not touched:
-                continue  # 无子项命中（如只剩 discussing 的记录，或纯 decision）→ 保持活跃
+                continue  # 无子项命中（只剩纯 decision 空壳等）→ 保持活跃
             row.changes = _dump_changes(items)
             row.status = "archived"
             row.resolved_in_document_id = resolved_in_document_id

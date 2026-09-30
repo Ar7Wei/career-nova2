@@ -86,7 +86,6 @@ li:first-child {
   color: #222222;
   letter-spacing: calc(0px + var(--ls, 0px)); /* 字间距（2026-09-02 排版自由度）：全局叠加 --ls，默认 0 */
   background: linear-gradient(135deg, #8daebd 0%, rgba(141, 174, 189, 0.8549019608) 1%, #b9ceda 8%, #d8e6ee 30%, #ffffff 50%);
-  box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
   position: relative;
 }
 
