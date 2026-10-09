@@ -26,6 +26,8 @@ dependencies = [
     "jinja2>=3.1.6",
     "langgraph-checkpoint-sqlite>=2.0.0",
     "deepagents>=0.7.13",
+    "pypdfium2>=5.12.1",
+    "playwright>=1.63.0",
 ]
 
 [dependency-groups]

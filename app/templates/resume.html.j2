@@ -76,8 +76,8 @@
       <div class="header no-alone-1">
         <div class="table">
           <div class="left">
-            <span class="title">{{ item.roles | join(' | ') }}</span>
-            <span class="subtitle margin-text-1">{{ item.name }}</span>
+            <span class="title">{{ item.name }}</span>
+            <span class="subtitle margin-text-1">{{ item.roles | join(' | ') }}</span>
           </div>
           <div class="right">
             <span class="date">{{ item.startDate }}{% if item.endDate %} - {{ item.endDate }}{% endif %}</span>
