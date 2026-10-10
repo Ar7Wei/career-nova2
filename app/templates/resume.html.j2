@@ -177,6 +177,25 @@
 {%- endif %}
 {%- endmacro %}
 
+{# 链接块（2026-10-10 补回）：原始版 resume-builder 的 links.pug 在移植时漏掉，profiles 数据进得来出不去。
+   读 basics.profiles（JSON-Resume 标准位置），整块无内容则不渲染。label 优先、空则显示 url 本身。
+   样式：右栏右对齐（.side text-align:right 全局已给），字号走 --fs-body 令牌随 --scale 缩放，
+   行距继承 .content 正文档基准（×--lh），模块间距用 margin-container-4（×--module-spacing）。 #}
+{%- macro render_links() %}
+{%- if resume.basics.profiles %}
+<div class="links margin-container-4 no-break">
+  <p class="section-title no-alone-1">作品链接</p>
+  <ul>
+    {%- for p in resume.basics.profiles %}
+    {%- if p.url %}
+    <li class="article margin-text-2"><a href="{{ p.url }}">{{ p.label or p.url }}</a></li>
+    {%- endif %}
+    {%- endfor %}
+  </ul>
+</div>
+{%- endif %}
+{%- endmacro %}
+
 <!doctype html>
 <html lang="zh">
 <head>
@@ -200,6 +219,7 @@
         {%- elif block == 'certificates' %}{{ render_certificates() }}
         {%- elif block == 'languages' %}{{ render_languages() }}
         {%- elif block == 'interests' %}{{ render_interests() }}
+        {%- elif block == 'links' %}{{ render_links() }}
         {%- endif %}
         {%- endfor %}
       </div>
@@ -212,6 +232,7 @@
         {%- elif block == 'certificates' %}{{ render_certificates() }}
         {%- elif block == 'languages' %}{{ render_languages() }}
         {%- elif block == 'interests' %}{{ render_interests() }}
+        {%- elif block == 'links' %}{{ render_links() }}
         {%- endif %}
         {%- endfor %}
       </div>

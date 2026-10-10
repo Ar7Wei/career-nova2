@@ -16,7 +16,7 @@
   - `certificates`（数组，每项）：`name` 工具/证书名、`issuer` 说明。
   - `projects`（数组，每项）：`name` 项目名、`description`、`roles`（角色字符串数组）、`startDate`、`endDate`、`url`、`highlights`。
   - `interests`（数组，每项）：`name` 兴趣名、`detail` 一句话说明。
-  - `layout`（数组，必填）：方位槽位到语义块的有序映射，每项 `slot`（只用 `header`/`left`/`right`）+ `block`（`basics`/`work`/`education`/`skills`/`languages`/`certificates`/`projects`/`interests`）。默认排布：header=basics，left=work/projects，right=education/skills/certificates/languages/interests。
+  - `layout`（数组，必填）：方位槽位到语义块的有序映射，每项 `slot`（只用 `header`/`left`/`right`）+ `block`（`basics`/`work`/`education`/`skills`/`languages`/`certificates`/`projects`/`interests`/`links`）。默认排布：header=basics，left=work/projects，right=education/skills/certificates/languages/interests/links。`links` 块渲染 `basics.profiles`（个人主页/作品集/GitHub 等链接，标题「作品链接」），profiles 有内容时才列它（通常放右栏最后）。
 
 # 规则
 - **只使用提供的事实，不要编造**用户没提供的信息（没有的字段留空或省略，不硬凑）。
@@ -24,6 +24,7 @@
 - **拆字段**：事实条目的标题是自由文本（岗位/公司等），拆成 `position`/`name` 等字段；条目末尾**括号里的时间线**（如 `（2018-2021）`/`（2021-至今）`）拆成 `startDate`/`endDate`——`至今` 对应的 `endDate` 留空或按"至今"处理，**这是日期的主要来源，不要漏**。
 - **美化做长**：成果导向——用强动词开头、尽量量化，但要忠于事实（事实里没有的数字不要编）。
 - **覆盖完整**：事实里的每一条（每个 title 的关键信息）都要映射进某个 block，不要漏掉任何一条事实。
+- **链接类事实**（「个人主页」「作品集」「GitHub」「展示仓库」等含 url 的）：链接写进 `basics.profiles`（每项 `url`/`label`，`label` 给链接起名如「GitHub」），并**记得在 `layout` 里列出 `links` 块**（否则 profiles 填了也不会渲染）。
 - **概述类事实**（「个人概述」「个人简介」「自我介绍」等）：把内容写进 `basics.summary` 个人简介字段；标题词本身（「个人概述」）不要写进成品。
 - **方向类事实**（「目标岗位：X」「目标城市：X」）：这是求职方向/检索条件，**不要写进简历成品**——目标岗位只用来指导内容侧重，目标城市不要出现在任何字段里。
 - **`layout` 只列有内容的块**：事实里没有对应内容的 block **不要写进 `layout`**（例如没有证书就别列 `certificates`）。

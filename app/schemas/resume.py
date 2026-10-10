@@ -30,6 +30,7 @@ BlockName = Literal[
     "certificates",
     "projects",
     "interests",
+    "links",
 ]
 
 
@@ -268,6 +269,7 @@ def default_layout() -> list[LayoutSlot]:
         LayoutSlot(slot="right", block="certificates"),
         LayoutSlot(slot="right", block="languages"),
         LayoutSlot(slot="right", block="interests"),
+        LayoutSlot(slot="right", block="links"),
     ]
 
 

@@ -442,3 +442,12 @@ p.section-title {
 .interests ul li {
   font-size: var(--fs-body);
 }
+
+/* 链接块（2026-10-10 补回，对齐 resume-builder links.pug）：右栏右对齐，字号走 --fs-body 令牌。
+   a[href] 的下划线样式走全局第 92 行，不在此另设。 */
+.links ul {
+  list-style: none;
+}
+.links ul li {
+  font-size: var(--fs-body);
+}
