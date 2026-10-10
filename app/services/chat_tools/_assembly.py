@@ -10,6 +10,7 @@ from app.graphs import chat as chat_graph
 from app.prompts import load_resume_agent_deep_prompt, preview_pending_hint
 from app.repositories.documents import latest_document
 from app.repositories.facts import list_facts
+from app.services import execution_proposal
 from app.services.chat_tools.tools import TOOLS
 from app.services.facts import compute_info_gaps, render_info_gaps
 from app.services.optimization import build_decisions_text, render_records_panel
@@ -64,6 +65,11 @@ async def build_deep_system_prompt() -> str:
     preview = await get_preview()
     if preview.strip():
         prompt += "\n\n" + preview_pending_hint()
+    # 待决提案状态（2026-10-09）：把「提案在不在、用户回没回话」摊在每轮重建的 system prompt 里，
+    # 免得模型记不住就照流程重提案、重问（用户已答「出吧」还被问第二遍的根因）。
+    proposal_state = await execution_proposal.render_proposal_state()
+    if proposal_state:
+        prompt += "\n\n## 待决的出稿提案（系统状态，据此判断下一步）\n" + proposal_state
     return prompt
 
 

@@ -154,14 +154,18 @@ class LayoutSlot(BaseModel):
 class Typography(BaseModel):
     """排版自由度配置（2026-09-02 grill 定稿）：五个数据层参数，一体落库随版本走、进导出。
 
-    全部字段都是「排版旋钮」，渲染时注入模板 :root CSS 变量（--scale/--lh/--spacing/--ls/--gutter）：
+    全部字段都是「排版旋钮」，渲染时注入模板 :root CSS 变量（--scale/--lh/--module-spacing/--ls/--gutter/--side-width）：
     - `scale` 字号倍率：1.0=基准字号，乘所有 font-size。
-    - `line_height` 行距倍率：乘 line-height（em 基准），默认 1.25。
-    - `spacing` 段距倍率：乘块间 margin，默认 1.0。
+    - `line_height` 行距倍率：乘 line-height（em 基准），默认 1.0（=模板出厂基准，和其他旋钮同套设计——
+      基准写死在 CSS、--lh 是纯乘数、默认 1 不动；老数据存的比例原样读，只算一次不叠加）。
+    - `module_spacing` 模块间距倍率：只乘**模块之间**（顶层 block 的 margin-container-4），默认 1.0。
+      条目内/行内细间距归行距管（2026-10-09 做减法：原 spacing 段距语义模糊、条目/行内缝退回行距）。
     - `letter_spacing` 字间距（绝对 px，加性微调）：默认 0。
     - `gutter` 栏距（绝对 px）：左右两栏之间的缝隙，默认 55（原 5px+50px padding 硬撑，2026-09-02
       主两栏 table→flex 后改为单个 column-gap 值，提成可调参数）。
-    对应模板 :root 的 --scale/--lh/--spacing/--ls/--gutter。
+    - `side_width` 右栏宽度（百分比）：右栏占整版宽度的 %，默认 28（2026-10-09 提成可调参数，
+      与 gutter 同性质——版式结构，不进「自动一页」求解，只手动调）。左栏弹性吃剩余。
+    对应模板 :root 的 --scale/--lh/--module-spacing/--ls/--gutter/--side-width。
 
     归一化（2026-09-02 grill「手动+自动共用硬限制」，唯一真相源在此）：
     每个字段入模型即 **clamp 到合法范围 + round 到各自小数位**（静默归一，不报错）——
@@ -173,19 +177,33 @@ class Typography(BaseModel):
 
     # (min, max, 小数位)。范围放宽到不卡校验（让越界值进来被 clamp），真正边界在归一化里收。
     scale: float = Field(default=1.0, description="字号倍率，1.0=基准，[0.5,1.5]")
-    line_height: float = Field(default=1.25, description="行距倍率，[1.0,2.0]")
-    spacing: float = Field(default=1.0, description="段距倍率，[0.0,2.0]")
+    line_height: float = Field(default=1.0, description="行距倍率，[0.5,2.0]，默认 1.0=模板出厂基准")
+    module_spacing: float = Field(default=1.0, description="模块间距倍率（只乘模块之间），[0.0,2.0]")
     letter_spacing: float = Field(default=0.0, description="字间距 px，[-1.0,3.0]")
     gutter: float = Field(default=55.0, description="栏距 px（左右两栏缝隙），[0,120]")
+    side_width: float = Field(default=28.0, description="右栏宽度 %（占整版宽度），[15,45]")
 
     # 字段名 → (下界, 上界, 小数位)。clamp+round 的唯一真相源。
     _BOUNDS: ClassVar[dict[str, tuple[float, float, int]]] = {
         "scale": (0.5, 1.5, 2),
-        "line_height": (1.0, 2.0, 2),
-        "spacing": (0.0, 2.0, 2),
+        "line_height": (0.5, 2.0, 2),
+        "module_spacing": (0.0, 2.0, 2),
         "letter_spacing": (-1.0, 3.0, 1),
         "gutter": (0.0, 120.0, 0),
+        "side_width": (15.0, 45.0, 0),
     }
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_keys(cls, data: object) -> object:
+        """老数据自愈（2026-10-09 改名 spacing→module_spacing）。
+
+        落库 JSON 里的旧 `spacing` 键搬到 `module_spacing`，读入即生效（typography_from_json
+        走这里），零重建表、零迁移脚本。
+        """
+        if isinstance(data, dict) and "spacing" in data and "module_spacing" not in data:
+            data = {**data, "module_spacing": data["spacing"]}
+        return data
 
     @model_validator(mode="after")
     def _normalize(self) -> "Typography":
@@ -200,8 +218,8 @@ class Typography(BaseModel):
         """渲染成 :root CSS 变量声明串（注入模板 <style>:root{...}</style>）。"""
         return (
             f"--scale: {self.scale}; --lh: {self.line_height}; "
-            f"--spacing: {self.spacing}; --ls: {self.letter_spacing}px; "
-            f"--gutter: {self.gutter}px"
+            f"--module-spacing: {self.module_spacing}; --ls: {self.letter_spacing}px; "
+            f"--gutter: {self.gutter}px; --side-width: {self.side_width}%"
         )
 
 

@@ -271,8 +271,8 @@
 - `404`：该文档无原件（生成/回滚到生成版）或原件文件缺失（历史遗留）——前端落 Markdown 预览。
 
 #### `POST /api/v1/documents/current/typography`
-**排版自由度落库（2026-09-02）**：改当前版排版参数（`Typography` 五参数：字号 / 行距 / 段距 / 字间距 / 栏距）→ 后端用该版 `resume_json` 重渲染 `html` + 配置落库。前端改排版先本地注入预览（即时），防抖 ~500ms 后打这里落库——导出 / 重开吃这份带正确排版变量的 HTML。
-- 请求体 `ResumeTypographyUpdate`：`{ "typography": { "scale": 1.0, "line_height": 1.25, "spacing": 1.0, "letter_spacing": 0, "gutter": 55 } }`。
+**排版自由度落库（2026-09-02）**：改当前版排版参数（`Typography`：字号 / 行距 / 模块间距 / 字间距 / 栏距 / 右栏宽度）→ 后端用该版 `resume_json` 重渲染 `html` + 配置落库。前端改排版先本地注入预览（即时），防抖 ~500ms 后打这里落库——导出 / 重开吃这份带正确排版变量的 HTML。
+- 请求体 `ResumeTypographyUpdate`：`{ "typography": { "scale": 1.0, "line_height": 1.0, "module_spacing": 1.0, "letter_spacing": 0, "gutter": 55, "side_width": 28 } }`。
 - 响应 `200` `ResumeDocument`（含重渲染后的 `html`）。
 - 响应 `409`：上传原件（无 `resume_json`，无法重渲染）——前端已置灰控件，这是双保险。
 

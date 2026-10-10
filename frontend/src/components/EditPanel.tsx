@@ -10,7 +10,7 @@ import { useT } from '@/lib/i18n'
 /**
  * 「编辑项」面板（2026-09-02 grill 定稿）：预览区顶栏的调节入口，点击展开玻璃浮窗（ToolTab 原语，
  * 与优化点/资料集同款）。承载**排版自由度五参数**（数据层，挂版本落库 + 关联导出）：
- *   字号 scale / 行距 line_height / 段距 spacing / 字间距 letter_spacing / 栏距 gutter。
+ *   字号 scale / 行距 line_height / 模块间距 module_spacing / 字间距 letter_spacing / 栏距 gutter。
  *   `key` 是 Typography 的**后端字段名（蛇形）**，`labelKey` 是 i18n 键（驼峰）——两者故意不同形，
  *   别顺手把 key 改成驼峰：Typography 无转换层，改了面板就取不到值（2026-09-24 修的正是这个）。
  *
@@ -25,7 +25,7 @@ import { useT } from '@/lib/i18n'
 interface ParamSpec {
   key: keyof Typography
   /** i18n 文案键（驼峰）——与 key 不同形是**故意的**：key 要跟后端字段名走，文案键跟 i18n 命名走。 */
-  labelKey: 'resume.fontSize' | 'resume.lineHeight' | 'resume.spacing' | 'resume.letterSpacing' | 'resume.gutter'
+  labelKey: 'resume.fontSize' | 'resume.lineHeight' | 'resume.moduleSpacing' | 'resume.letterSpacing' | 'resume.gutter' | 'resume.sideWidth'
   min: number
   max: number
   step: number
@@ -41,11 +41,15 @@ const PARAMS: ParamSpec[] = [
   { key: 'scale', labelKey: 'resume.fontSize', min: 0.5, max: 1.5, step: 0.01, decimals: 2, unit: '倍', def: 1 },
   // 字间距紧跟字号（2026-09-02 反馈）：两者都管「字」，放一起调节更顺手。
   { key: 'letter_spacing', labelKey: 'resume.letterSpacing', min: -1, max: 3, step: 0.1, decimals: 1, unit: 'px', def: 0 },
-  { key: 'line_height', labelKey: 'resume.lineHeight', min: 1.0, max: 2.0, step: 0.05, decimals: 2, unit: '倍', def: 1.25 },
-  // 段距下限放宽到 0（2026-09-02 反馈「还能再缩更小」）：0 = 段间无额外留白，内容压到最挤。
-  { key: 'spacing', labelKey: 'resume.spacing', min: 0, max: 2.0, step: 0.05, decimals: 2, unit: '倍', def: 1 },
+  { key: 'line_height', labelKey: 'resume.lineHeight', min: 0.5, max: 2.0, step: 0.05, decimals: 2, unit: '倍', def: 1 },
+  // 模块间距（2026-10-09 段距做减法改名）：只管模块和模块之间（margin-container-4 顶层 block 缝），
+  // 条目内/行内细缝归行距管。下限 0 = 模块间无额外留白，内容压到最挤。
+  { key: 'module_spacing', labelKey: 'resume.moduleSpacing', min: 0, max: 2.0, step: 0.05, decimals: 2, unit: '倍', def: 1 },
   // 栏距（绝对 px，2026-09-02）：左右两栏缝隙，主两栏 flex 化后由 column-gap 单值控制。默认 55 = 原 5+50 padding。
   { key: 'gutter', labelKey: 'resume.gutter', min: 0, max: 120, step: 1, decimals: 0, unit: 'px', def: 55 },
+  // 右栏宽度（百分比 %，2026-10-09）：右栏占整版宽度比例，与 gutter 同性质——版式结构，只手动调、
+  // 不进「自动一页」求解（求解器冻结它，同 gutter/letter_spacing）。默认 28 = 原写死的 28%。
+  { key: 'side_width', labelKey: 'resume.sideWidth', min: 15, max: 45, step: 1, decimals: 0, unit: '%', def: 28 },
 ]
 
 const clamp = (v: number, s: ParamSpec) => Math.min(s.max, Math.max(s.min, v))

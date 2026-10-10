@@ -4,8 +4,9 @@
 `render_resume(resume, typography)` 是**纯函数**——同样的 JSON + 排版配置永远吐同样的 HTML，
 内容与排版永久解耦，HTML 是内容的派生视图（不再是 LLM 自由生成物）。
 
-2026-09-02 排版自由度（grill）：排版参数从单一 scale 扩成四参数 Typography
-（字号/行距/段距/字间距），一体注入模板 :root CSS 变量（--scale/--lh/--spacing/--ls）。
+2026-09-02 排版自由度（grill）：排版参数从单一 scale 扩成多参数 Typography
+（字号/行距/模块间距/字间距/栏距/右栏宽），一体注入模板 :root CSS 变量
+（--scale/--lh/--module-spacing/--ls/--gutter/--side-width）。
 
 分层：本层是纯渲染（放 utils，不属 service 编排层）——不碰 DB、不知道 LLM 存在。
 输入 Resume schema + Typography，输出完整 HTML 文档（内联 <style> + :root 排版变量），
@@ -57,7 +58,7 @@ def _group_blocks(resume: Resume) -> tuple[list[BlockName], list[BlockName], lis
 def render_resume(resume: Resume, scale: float | None = None, typography: Typography | None = None) -> str:
     """把结构化简历渲染成完整 HTML 文档（内联 CSS + 排版变量）。
 
-    typography：排版自由度四参数（2026-09-02），注入 :root --scale/--lh/--spacing/--ls。
+    typography：排版自由度参数（2026-09-02），注入 :root --scale/--lh/--module-spacing/--ls 等。
     scale：字号倍率快捷位（向后兼容旧调用 render_resume(r, 0.9)）——并入 Typography(scale=scale)。
     typography 优先；只给 scale 时其余三参数用默认。两者都缺省 = 默认排版。
     返回完整 <!doctype html> 文档，可直接落库 / iframe 预览 / printToPDF 导出。

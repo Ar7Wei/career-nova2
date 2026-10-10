@@ -5,10 +5,40 @@
  * 适配 A4 纸宽 + 系统字体栈（本地优先，不引外部字体）。
  *
  * 排版自由度四变量（2026-09-02 grill，全部由模板 :root 注入，落库随版本走、进导出）：
- * - --scale  字号倍率：乘所有 font-size（calc(Npx * var(--scale))）。
- * - --lh     行距倍率：乘 line-height 的 em 基准（calc(Nem * var(--lh))）。
- * - --spacing 段距倍率：乘块间 margin 的 px 阶梯（calc(Npx * var(--spacing))）。
+ * - --scale  字号倍率：乘**字号令牌**（`--fs-*` 定义在 .content，见下）。
+ * - --lh     行距倍率：乘全版 line-height 基准（无单位 × var(--lh)）+ 「行与行」缝隙（Npx × var(--lh)）。
+ * - --module-spacing 模块间距倍率：只乘**模块之间**（margin-container-4 顶层 block 缝）。
  * - --ls     字间距（绝对 px，加性）：letter-spacing: calc(0px + var(--ls))，全局叠加。
+ *
+ * 2026-10-09 行距/模块间距重构（默认归 1.0）：
+ * - 行距从「点名式」（只乘 p/q/li 三条）改成「全版基准派生」：.content 设全局 line-height 基准，
+ *   所有文字行（含原裸吃 UA 默认的 summary/title/subtitle/date/span）都继承并受 --lh 控制；
+ *   条目间/行内细缝（margin-container-2/3、margin-text-*）也从段距挪归行距——行距管「行与行」。
+ * - 段距做减法改名「模块间距」：只管模块和模块之间（margin-container-4），条目/行内不再被它碰。
+ * - 各旋钮默认 = 1（出厂样子，和其他旋钮同套设计）；基准写死在 CSS、变量是纯乘数、只算一次。
+ *
+ * 2026-10-09 行距两档全统一（修 em 继承 bug）：
+ * - 原 `.content { line-height: calc(1.4em * …) }` 用 em：.content 自身 16px，1.4em 被**解析成 22.4px 绝对长度**，
+ *   line-height 按「计算值」继承——后代永远拿到这 22.4px，不会按各自字号重算。于是字号越大行距反而越紧
+ *   （summary 15px→1.49、date 18px→1.24、title 20px→1.12），全版各行高比例各行其是。**这是「不同模块行高
+ *   不统一」的根因**。改**无单位** `1.4`：计算值是纯数字，继承下去每个元素用**自己的字号**重算，比例才真统一。
+ * - 全版只剩 **两档**：正文档（基准 = `.content` 的 1.4，p/q/li/contact/summary/title/subtitle/date… 一律继承，
+ *   删掉 p/q 1.25、li 1.35、contact 1.6 三个「例外档」）+ 标题档（`1.25`，用于区块标题 / 职位）。
+ *   两档都用无单位倍数，随 --lh 整体缩放。
+ *   **姓名单独留 1.0**（`calc(1.0 * var(--lh))`）：52px 超大字单行，套 1.25 会在名字块上下白多出 ~13px 留白，
+ *   且它不参与「行与行」的视觉统一，故破例——用 1.0×--lh（仍随行距旋钮缩放，但默认不额外撑高）。
+ *
+ * 2026-10-09 字号令牌化 + 并档（治「字号散落各处」）：
+ * - 原字号是 16 处各自的 `calc(Npx * var(--scale))` 裸值、散落全文件，改字号得逐处找。
+ *   收敛成 **5 个令牌** `--fs-name/section/entry/body`（定义在 `.content`，自定义属性继承给后代），
+ *   各处 `font-size: var(--fs-*)`——**字号只在一处维护**，改一档 = 改一行，不再散落。
+ * - 并档：原 6 档（52/26/22/20/18/15）→ **5 档**（52/26/20/18）——职位 22 → 条目档 20、
+ *   摘要 15 → 正文档 18。层级用「字号 + 字重」两条腿区分，不靠 2px 的微差。
+ * - 字号仍**全局受 --scale 缩放**（令牌本身是 calc(px*--scale)），且每条 font-size 都走令牌——
+ *   不会再有「漏网的裸字号」。
+ *
+ * 2026-10-09 条目头解耦（`.main` → 模块锚定）：work/projects 的条目头/高亮样式原挂在左栏 `.main` 上，
+ * 改版式把 work 挪右栏会失效（掉回 16px 裸默认）。改锚 `.work/.projects` 模块——block 走哪个 slot 都跟得住。
  */
 * {
   margin: 0;
@@ -51,7 +81,6 @@ html, body {
 }
 @page {
   size: A4;
-  width: 100%;
   margin: 0;
 }
 
@@ -65,13 +94,9 @@ a[href] {
   text-decoration-color: #888888;
 }
 
-p, q {
-  line-height: calc(1.25em * var(--lh, 1));
-}
-
-li {
-  line-height: calc(1.35em * var(--lh, 1));
-}
+/* 行距两档：正文档 = 继承 .content 的无单位基准（1.4）。p/q/li 不再另设例外档——
+   原 1.25em/1.35em/1.6em 各自为政是「不同模块行高不统一」的一部分（2026-10-09 并档删除）。
+   li 仅保留首条去顶缝。 */
 li:first-child {
   margin-top: 0;
 }
@@ -84,6 +109,18 @@ li:first-child {
   margin: 0 auto;
   font-family: system-ui, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   color: #222222;
+  /* 字号令牌（2026-10-09 收敛）：全版字号只此一处定义，各处 font-size 一律取令牌——改字号只动这几行。
+     自定义属性会继承给所有后代，故后代规则用 var(--fs-*) 即可。全部随 --scale 缩放。
+     字号只保留 5 档（本批并档：22→entry、15→body）。 */
+  --fs-name: calc(52px * var(--scale, 1));    /* 姓名 */
+  --fs-section: calc(26px * var(--scale, 1)); /* 区块标题（各 section-title） */
+  --fs-entry: calc(20px * var(--scale, 1));   /* 条目主行（岗位/项目/学校/技能组名）+ 头部职位 = 同档 */
+  --fs-body: calc(18px * var(--scale, 1));    /* 正文/副信息（摘要·日期·公司·证书方·联系方式·高亮·技能项） */
+  /* 全版行距基准（2026-10-09 两档统一）：**无单位** 1.4（≈ 浏览器 normal），默认值（--lh=1）下高度贴近原样。
+     ⚠️ 必须无单位：`1.4em` 会解析成 .content 自身 16px 的 22.4px 绝对长度，按「计算值」继承后后代全拿到
+     这 22.4px、不按各自字号重算（字号越大行距越紧）——这正是「不同模块行高不统一」的根因。无单位则计算值是
+     纯数字，每个后代用**自己的字号**重算，比例全版一致。所有正文行（summary/title/subtitle/date/span/li…）都继承此值。 */
+  line-height: calc(1.4 * var(--lh, 1));
   letter-spacing: calc(0px + var(--ls, 0px)); /* 字间距（2026-09-02 排版自由度）：全局叠加 --ls，默认 0 */
   background: linear-gradient(135deg, #8daebd 0%, rgba(141, 174, 189, 0.8549019608) 1%, #b9ceda 8%, #d8e6ee 30%, #ffffff 50%);
   position: relative;
@@ -128,7 +165,9 @@ li:first-child {
 }
 .content > .table > .side {
   display: block;
-  flex: 0 0 28%; /* 右栏定宽 28%（≈原 30% 去掉 padding 后的内容宽），贴右缘 */
+  /* 右栏定宽（2026-10-09 提成排版参数 --side-width，默认 28%）：占整版宽度百分比，可调。
+     左栏弹性吃剩余（flex:1 1 0），栏距另由 --gutter 控制。 */
+  flex: 0 0 var(--side-width, 28%);
   width: auto;
   text-align: right; /* 右栏内容右对齐（用户定：保持右对齐） */
   background-color: transparent;
@@ -153,24 +192,25 @@ li:first-child {
 }
 
 .summary {
-  font-size: calc(15px * var(--scale, 1));
+  font-size: var(--fs-body);
 }
 .summary:empty {
   display: none;
 }
 
 .section-title {
-  font-size: calc(26px * var(--scale, 1));
+  font-size: var(--fs-section);
   font-weight: normal;
-  /* 标题下边距跟行距倍率 --lh 走（2026-09-02 反馈）：行距拉开时标题与其内容同比例呼吸，
-     不再写死 15px 导致行距调大后标题与正文节奏脱节。 */
+  /* 标题与下方内容的缝跟行距 --lh 走（2026-10-09 归位）：它是「标题行 vs 正文行」的行间距，
+     归行距管（行距=行与行）；不再误挂段距/模块间距。 */
   margin: 0 0 calc(15px * var(--lh, 1)) 0;
 }
-/* 标题文字本体行高固定 1.2（2026-09-02）：h2 等标题元素自带 UA line-height，又叠模板
-   p,q/li 的 calc(em*--lh) 会重复放大。标题是单行短文本，行高与行距旋钮解耦，避免调行距
-   时标题块高度被双重放大撑爆。 */
+/* 标题档（2026-10-09 两档统一）：标题是无单位 1.25（短行、紧凑），正文档继承 .content 的 1.4。
+   区块标题 `p.section-title`、职位两处锚此档，避免「同列多种行高」。姓名不在此列——它超大单行、
+   单独留 1.0（见 `.basics .main .name`）。
+   用无单位（非 em）同上：随 --lh 整体缩放，且不因字号不同而漂移。 */
 p.section-title {
-  line-height: 1.2;
+  line-height: calc(1.25 * var(--lh, 1));
 }
 
 .contact li {
@@ -200,16 +240,18 @@ p.section-title {
   opacity: 0.7;
 }
 
+/* 条目之间（公司/项目/教育各条）——行距 --lh 管「行与行」的纵向缝（2026-10-09 从段距挪归行距）。 */
 .margin-container-2:not(:first-child) {
-  margin-top: calc(15px * var(--spacing, 1));
+  margin-top: calc(15px * var(--lh, 1));
 }
 
 .margin-container-3:not(:first-child) {
-  margin-top: calc(15px * var(--spacing, 1));
+  margin-top: calc(15px * var(--lh, 1));
 }
 
+/* 模块之间（顶层 block：工作/项目/教育/技能…）——模块间距 --module-spacing 只管这一层（做减法）。 */
 .margin-container-4:not(:first-child) {
-  margin-top: calc(35px * var(--spacing, 1));
+  margin-top: calc(35px * var(--module-spacing, 1));
 }
 
 .padding-container-2 {
@@ -225,35 +267,35 @@ p.section-title {
 }
 
 .margin-text-1 {
-  margin-top: calc(2px * var(--spacing, 1));
+  margin-top: calc(2px * var(--lh, 1));
 }
 .margin-text-1:empty {
   display: none;
 }
 
 .margin-text-2 {
-  margin-top: calc(4px * var(--spacing, 1));
+  margin-top: calc(4px * var(--lh, 1));
 }
 .margin-text-2:empty {
   display: none;
 }
 
 .margin-text-3 {
-  margin-top: calc(6px * var(--spacing, 1));
+  margin-top: calc(6px * var(--lh, 1));
 }
 .margin-text-3:empty {
   display: none;
 }
 
 .margin-text-4 {
-  margin-top: calc(8px * var(--spacing, 1));
+  margin-top: calc(8px * var(--lh, 1));
 }
 .margin-text-4:empty {
   display: none;
 }
 
 .margin-text-5 {
-  margin-top: calc(14px * var(--spacing, 1));
+  margin-top: calc(14px * var(--lh, 1));
 }
 .margin-text-5:empty {
   display: none;
@@ -263,27 +305,17 @@ p.section-title {
   break-inside: avoid;
 }
 
-.no-alone-1 {
-  break-inside: avoid;
-}
-.no-alone-1::after {
-  content: "";
-  display: block;
-  height: 75px;
-  margin-bottom: -75px;
-}
+/* 2026-10-10：`.no-alone-1::after` / `.no-alone-2::after` 的「幻影撑高」（75px/150px + 负 margin）已删除。
+   它原先是打印分页时代阻止「区块标题/条目头孤立在页底」的 hack，代价是给这些盒子凭空撑高
+   （条目头 +75px、区块标题 +150px），既不可靠（魔数不随字号走）又会干扰高度测量。
+   简历改为「一页硬裁」（导出时 `.content` 限高 1123px + overflow:hidden）后多页分页不存在，
+   这套 hack 彻底无用，故连同其 `break-inside:avoid` 一起移除。模板里的 `no-alone-*` 类名保留（无害）。 */
 
-.no-alone-2 {
-  break-inside: avoid;
-}
-.no-alone-2::after {
-  content: "";
-  display: block;
-  height: 150px;
-  margin-bottom: -150px;
-}
-
-.main .highlights {
+/* 条目头 / 高亮：按**模块**锚定（.work/.projects），不按栏位（.main）——2026-10-09 解耦。
+   原 `.main .left/…` 绑的是左栏容器，默认版式下 work/projects 恰在左栏故可用，但改版式把 work
+   挪到右栏时这些规则就失效、掉回 16px 裸默认。锚到模块后，block 走哪个 slot 样式都跟得住。
+   （这套 class —— left/right/title/subtitle/date/highlights —— 仅 work/projects 两个宏在用。） */
+.work .highlights, .projects .highlights {
   width: auto;
   display: block;
   padding: 0 10px;
@@ -292,33 +324,33 @@ p.section-title {
   column-width: 310px;
   column-gap: 10px;
 }
-.main .highlights li {
-  font-size: calc(18px * var(--scale, 1));
+.work .highlights li, .projects .highlights li {
+  font-size: var(--fs-body);
   list-style: none;
 }
-.main .highlights li:before {
+.work .highlights li:before, .projects .highlights li:before {
   content: "· ";
   vertical-align: middle;
 }
-.main .left {
+.work .left, .projects .left {
   display: table-cell;
 }
-.main .left .title {
-  font-size: calc(20px * var(--scale, 1));
+.work .left .title, .projects .left .title {
+  font-size: var(--fs-entry);
   font-weight: bold;
   display: block;
 }
-.main .left .subtitle {
-  font-size: calc(20px * var(--scale, 1));
+.work .left .subtitle, .projects .left .subtitle {
+  font-size: var(--fs-entry);
   font-weight: 300;
   display: block;
 }
-.main .right {
+.work .right, .projects .right {
   text-align: right;
   display: table-cell;
 }
-.main .right .date {
-  font-size: calc(18px * var(--scale, 1));
+.work .right .date, .projects .right .date {
+  font-size: var(--fs-body);
   font-weight: 300;
   white-space: nowrap;
 }
@@ -327,15 +359,15 @@ p.section-title {
   vertical-align: middle;
 }
 .basics .main .name {
-  font-size: calc(52px * var(--scale, 1));
-  line-height: 1em;
+  font-size: var(--fs-name);
+  line-height: calc(1 * var(--lh, 1)); /* 姓名破例 1.0：52px 单行，1.25 会上下白多出 ~13px（2026-10-09） */
   font-weight: bold;
   display: block;
   margin-left: -0.88px;
 }
 .basics .main .label {
-  font-size: calc(22px * var(--scale, 1));
-  line-height: 1.2em;
+  font-size: var(--fs-entry);
+  line-height: calc(1.25 * var(--lh, 1)); /* 标题档（原 1.2em，2026-10-09 锚到标题档 1.25） */
   font-weight: 300;
   display: block;
   margin-left: -0.88px;
@@ -349,28 +381,31 @@ p.section-title {
   list-style-type: none;
 }
 .basics .side .contact li {
-  font-size: calc(18px * var(--scale, 1));
-  line-height: calc(1.6em * var(--lh, 1));
+  font-size: var(--fs-body);
+  /* 行高不另设：继承 .content 正文档档（原 1.6em 是例外档，2026-10-09 并档删除） */
 }
 .basics .side .contact-highlight {
   text-decoration: underline;
   font-weight: bold;
 }
 
+/* 右栏字号字重统一（2026-10-09）：与左主栏同一套层级——
+   条目主行 = --fs-entry（20px）bold，正文/副信息 = --fs-body（18px）normal(400)。
+   区块标题（--fs-section 26px）全局本就统一，不在此列。 */
 .education .title {
-  font-size: calc(20px * var(--scale, 1));
+  font-size: var(--fs-entry);
+  font-weight: bold;
 }
 .education .institution {
-  font-size: calc(18px * var(--scale, 1));
-  font-weight: 300;
+  font-size: var(--fs-body);
 }
 
 .certificates .name {
-  font-size: calc(20px * var(--scale, 1));
+  font-size: var(--fs-entry);
+  font-weight: bold;
 }
 .certificates .issuer {
-  font-size: calc(18px * var(--scale, 1));
-  font-weight: 300;
+  font-size: var(--fs-body);
 }
 
 .skills .section-title {
@@ -378,21 +413,19 @@ p.section-title {
 }
 .skills .container {
   display: block;
-  columns: 2;
-  column-gap: 10px;
+  /* 单列（2026-10-09）：内容减少，去掉原 columns:2 两栏网格，改竖向单列平铺。 */
 }
 .skills .container .article {
-  break-inside: avoid-column;
-  min-width: 120px;
+  break-inside: avoid;
   padding-top: 15px;
 }
 .skills .container .article span {
   display: block;
-  font-size: calc(20px * var(--scale, 1));
+  font-size: var(--fs-entry);
+  font-weight: bold;
 }
 .skills .container .article li {
-  font-size: calc(18px * var(--scale, 1));
-  font-weight: 300;
+  font-size: var(--fs-body);
   list-style: none;
 }
 
@@ -400,12 +433,12 @@ p.section-title {
   list-style: none;
 }
 .languages ul li {
-  font-size: calc(14px * var(--scale, 1));
+  font-size: var(--fs-body);
 }
 
 .interests ul {
   list-style: none;
 }
 .interests ul li {
-  font-size: calc(14px * var(--scale, 1));
+  font-size: var(--fs-body);
 }

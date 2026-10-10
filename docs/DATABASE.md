@@ -94,7 +94,7 @@
 | `html` | TEXT | **渲染快照**（`HTML = render(resume_json, typography)` 纯函数产物）：固定模板（`app/templates/resume.html.j2`）从该版 `resume_json` 确定性渲染的完整 HTML 文档（内联样式）。上传 v1 为空。**不再是 LLM 产物、不再需要「排版崩了重渲染」的修复路径**。历史库迁移：`init_db` 检测缺列自动 ALTER 补上 |
 | `summary` | TEXT | **一句话版本简述**（Git commit message 意味，2026-08-14 S8）：LLM 产出新版本时顺带吐（`<summary>` 标记剥出）；上传 v1 固定「最初版本」；无标记时回退规则名。前端版本行显示「第 N 稿 · summary · 日期」；历史库迁移：`init_db` 检测缺列自动 ALTER 补上（默认空 = 无简述，回退显示 source） |
 | `scale` | REAL | **字号阶梯**（2026-09-02 落库挂版本）：排版松紧度，1.0 = 基准字号；上传 v1 无意义留 1.0。**迁移期遗留**——新值统一走 `typography`，读侧以 `typography` 为准 |
-| `typography` | TEXT | **排版自由度配置**（2026-09-02）：JSON 字符串，承载 `Typography` 五参数（`scale` / `line_height` / `spacing` / `letter_spacing` / `gutter`）；空 = 默认 `Typography`。改排版经 `POST /documents/current/typography` 落库、重渲染 `html` |
+| `typography` | TEXT | **排版自由度配置**（2026-09-02）：JSON 字符串，承载 `Typography` 多参数（`scale` / `line_height` / `module_spacing` / `letter_spacing` / `gutter` / `side_width`）；空 = 默认 `Typography`。旧键 `spacing`（2026-10-09 改名 `module_spacing`）读入时自动搬键（读侧自愈，无重建表）。改排版经 `POST /documents/current/typography` 落库、重渲染 `html` |
 | `source` | TEXT | `upload` 上传转出 / `generated` LLM 组合产出 / `rollback`（旧纯追加回滚的遗留值，软作废回滚不再产生新行） |
 | `original_name` | TEXT | 上传原件文件名（仅上传版有；生成版/回滚到生成版为空） |
 | `original_ext` | TEXT | 上传原件扩展名（小写无点，驱动前端预览分档） |

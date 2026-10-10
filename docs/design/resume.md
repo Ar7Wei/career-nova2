@@ -49,7 +49,7 @@
 
 **决策：双通道（C）**——agent 自主提议（信息够了主动问"要生成吗"）+ 用户显式要求（"帮我生成/改一版"）。触发权不完全在 agent 也不完全在用户，最灵活，符合"一个 agent 灵活跳"。
 
-**生成页数**：默认一页。生成前一步跟用户确认——资料少则一页，资料实在太多则确认一页还是两页。**不硬锁一页**（资深/学术可两页），且页数也是用户可自定义的标准之一。
+**生成页数**：**只做一页**（2026-10-10 修订，取代 2026-08-28 的「不硬锁一页」）。简历按「一页」这个通行标准产出：预览里画**一条一页剪切线**（= 页底 `1123px`，线下居中提示），**导出 PDF 时把线下内容截掉**（对根容器限高 + `overflow:hidden` 硬裁一页）。截的是**输出**不是数据——简历 JSON / 各版本原样保留，调小字号或用「自动一页」后线下内容会重新进页。
 
 ---
 
@@ -662,7 +662,7 @@ POST /chat { session_id, message }
 [确认入库] 写库 vN（版本变更）→ 开新 session（§11.1）→ 试衣间（二阶段）待二阶段实现
 ```
 
-> **页数（2026-08-28 修订）**：不再是「生成时锁死一页」——排版由固定模板 + 字号阶梯（`Typography` 五参数）人工调，页数靠 A4 纸逐页预览人眼定。
+> **页数（2026-10-10 修订，取代 2026-08-28）**：只做一页。排版仍由固定模板 + 字号阶梯（`Typography` 五参数）人工调 + 「自动一页」求解；预览画一条一页剪切线（`1123px`，线下居中提示），**导出时把线下内容硬裁掉**（截输出、不删数据）。原「页数靠 A4 纸逐页预览人眼定、可多页」的表述作废。
 
 ### 13.2 目标岗位
 
@@ -674,15 +674,15 @@ POST /chat { session_id, message }
 
 > **本节整体重写。** 旧版（2026-08-13「Markdown 内容层 → LLM 排版 agent → HTML 排版层」+ 2026-08-13「Playwright 排⻚闭环」）已被  推翻——见本文件末尾变更记录「2026-08-28 排版转向」。
 
-**决策（2026-08-28，grilling 定稿）：LLM 从「排版 + 排⻚」彻底退出。内容结构化（JSON），排版用固定模板（Jinja2）确定性渲染，页数靠字号阶梯 + A4 纸逐页预览人工调。**
+**决策（2026-08-28，grilling 定稿；2026-10-10 页数收敛为「一页硬裁」）：LLM 从「排版 + 排⻚」彻底退出。内容结构化（JSON），排版用固定模板（Jinja2）确定性渲染，页数靠字号阶梯 + 「自动一页」求解调到一页，导出时硬裁到一页（线下内容截掉、数据保留）。**
 
 ```
 上传 → 抽取 → user_facts（半结构化 JSON，分散原料）
                   ↓ 生成（LLM，结构化输出）
         resume JSON（JSON-Resume 词表 + layout 映射表，整体成品）
                   ↓ 渲染（Jinja2 确定性，后端纯函数）
-        HTML（每版冻结快照）→ 前端 iframe A4 纸逐页预览 + 字号阶梯缩放
-                  ↓ 打印
+        HTML（每版冻结快照）→ 前端 iframe 预览 + 一条一页剪切线 + 字号阶梯缩放
+                  ↓ 打印（对 `.content` 限高 1123px + overflow:hidden 硬裁一页）
         PDF（导出层）——已实现（Electron 隐藏窗口 printToPDF）
 ```
 
@@ -691,10 +691,17 @@ POST /chat { session_id, message }
 - **为什么 LLM 退出排版**（推翻旧 §13.3「HTML 由 LLM 生成而非固定模板」）：LLM 自由排版带来「每份简历独一无二的版式」，但这个自由度恰恰是三类 bug 的温床——① 排⻚闭环删 HTML 内容但从不回写 Markdown（Markdown 与 HTML 分叉，内容静默丢失）；② `shell_html` 剥 body 时丢掉 `<head><style>`（排版乱）；③ `.a4-sheet` 每轮重套一层壳（嵌套）。对单用户求职产品，「确定性、内容不丢、排版不乱」远重于「版式唯一」。
 - **三列并存**（`resume_documents`，详见 DATABASE.md）：`markdown`（上传 v1 的 MarkItDown 抽取物 + 元件兜底预览）、`resume_json`（生成版结构化真身）、`html`（生成版渲染快照）。上传 v1 只有 markdown；生成版只有 `resume_json` + `html`（`markdown` 空）。
 - **渲染层是纯函数**（`app/services/render.py::render_resume`）：不碰 DB、不知道 LLM 存在；模板 + CSS 惰性单例编译，per-request 无文件 IO。方位（header/left/right）由 `layout` 映射表决定——调顺序 = 改 layout 数据，不动模板。
-- **排版自由度（2026-09-02 扩）**：排版参数从单一 `scale` 扩成五参数 `Typography`（字号 / 行距 / 段距 / 字间距 / 栏距），一体注入模板 `:root` CSS 变量（`--scale/--lh/--spacing/--ls/--gutter`）。落库挂版本（`resume_documents.typography` JSON 列，旧 `scale` 列是迁移期遗留），新生成稿继承上一版。
-  - **字段名是蛇形，前后端同形**（`scale` / `line_height` / `spacing` / `letter_spacing` / `gutter`）：本仓**没有 snake↔camel 转换层**，后端吐什么前端就按什么读（同 `created_at` / `original_name` / `resume_json`）。前端 TS 的 `Typography` 因此也用蛇形键——**别按驼峰习惯改**：`lineHeight`/`letterSpacing` 一旦写成驼峰，后端吐的 `line_height`/`letter_spacing` 就取不到值，编辑项面板里这两项会恒空（框空白），且每次改任一参数整体写回时把它们抹成 `undefined`（自动一页更会算出 `NaN`）。2026-09-24 修过一次，正是这个坑。
+- **排版自由度（2026-09-02 扩，2026-10-09 语义收敛）**：排版参数 `Typography`（字号 / 行距 / 模块间距 / 字间距 / 栏距 / 右栏宽度），一体注入模板 `:root` CSS 变量（`--scale/--lh/--module-spacing/--ls/--gutter/--side-width`）。落库挂版本（`resume_documents.typography` JSON 列，旧 `scale` 列是迁移期遗留），新生成稿继承上一版。
+  - **行距 / 模块间距语义**（2026-10-09）：行距 `--lh` 管「**行与行**」——全版行高基准 + 条目间/行内细缝（`margin-container-2/3`、`margin-text-*`、标题下边距）都随它；模块间距 `--module-spacing` 只管「**模块与模块之间**」（顶层 block 的 `margin-container-4`）。两个旋钮各管一维，互不越界。
+  - **行距只有两档、且用无单位倍数**（2026-10-09）：全版行高归 **两档**——① **正文档**（`.content` 基准 `line-height: calc(1.4 * var(--lh))`，所有正文行 `summary/title/subtitle/date/span/li`…继承）；② **标题档** `1.25`（区块标题 `p.section-title` / 职位两处共用）。两档都必须是**无单位倍数**：`1.4em` 这类会在 `.content`（16px）身上**解析成 22.4px 绝对长度**，`line-height` 按「计算值」继承后后代永远拿到这 22.4px、不按各自字号重算，于是字号越大行距反而越紧（15px→1.49、18px→1.24、20px→1.12），这正是「不同模块行高不统一」的根因；无单位则计算值是纯数字，每个后代用**自己的字号**重算，比例全版一致。原先 `p/q 1.25em`、`li 1.35em`、联系方式 `1.6em` 三个「例外档」已删除并档。**姓名是唯一第三处**：52px 超大单行，套 1.25 会给名字块上下多出 ~13px 留白，故单独留 `calc(1 * var(--lh))`（不参与「行与行」统一，但默认不额外撑高）。
+  - **旋钮默认一律 = 1**（= 模板出厂基准，基准写死在 CSS、变量是纯乘数）。行距默认原为 `1.25`（跑偏，等于一进场预拧 1.25 倍），2026-10-09 拨正为 `1.0`——老数据存的比例原样读、只算一次、不叠加，无需迁移。
+  - **字号：令牌化 + 5 档**（2026-10-09）：全版字号收敛成 **5 个 CSS 令牌** `--fs-name(52) / --fs-section(26) / --fs-entry(20) / --fs-body(18)`，**统一定义在 `.content`**（自定义属性会继承给后代），模板里每条 `font-size` 一律 `var(--fs-*)`——**字号只在一处维护**，改一档 = 改一行，杜绝「字号散落全文件、改一处漏一处」。令牌本身是 `calc(Npx * var(--scale))`，故仍**全局受字号旋钮缩放**、无漏网。
+    - 并档：原 6 档（52/26/**22**/20/18/**15**）→ 5 档——职位 `22→--fs-entry(20)`、摘要 `15→--fs-body(18)`。层级靠「**字号 + 字重**」两条腿区分，不靠 2px 的微差（20 bold / 18 normal 本就靠字重分）。
+    - **字号不做「行距式」的统一（两档）**：行高是**节奏**属性（行与行的呼吸），越统一越齐；字号是**层级**属性（谁比谁重要），并两档 = 姓名/标题/正文全同号、层级全塌。故字号按「角色」分档、不做减法，只把**近重复**的档并掉。
+    - **条目头样式按模块锚定**（2026-10-09 解耦）：work/projects 的条目头/高亮（`.left/.right/.title/.subtitle/.date/.highlights`）锚在 **`.work`/`.projects` 模块**上，不再挂左栏容器 `.main`。原写法绑栏位——默认版式下 work/projects 恰在左栏故可用，但**改版式把 work 挪到右栏时**规则失效、掉回 16px 裸默认。锚到模块后 block 走哪个 slot 样式都跟得住。`.education/.certificates/.skills/…` 那组本就按模块锚定，一致了。
+  - **字段名是蛇形，前后端同形**（`scale` / `line_height` / `module_spacing` / `letter_spacing` / `gutter` / `side_width`）：本仓**没有 snake↔camel 转换层**，后端吐什么前端就按什么读（同 `created_at` / `original_name` / `resume_json`）。前端 TS 的 `Typography` 因此也用蛇形键——**别按驼峰习惯改**：`lineHeight`/`letterSpacing` 一旦写成驼峰，后端吐的 `line_height`/`letter_spacing` 就取不到值，编辑项面板里这两项会恒空（框空白），且每次改任一参数整体写回时把它们抹成 `undefined`（自动一页更会算出 `NaN`）。2026-09-24 修过一次，正是这个坑。`module_spacing` 旧名 `spacing`（2026-10-09 改）：读入时自动把旧键搬到新键（读侧自愈，零重建表）。
 - **前后端分工**：前端 iframe + `sandbox` 渲染落库 HTML（CSS 不污染应用外壳、禁脚本），**不新增后端 HTML 端点**。
-- **PDF 导出（已实现）**：左栏「下载」菜单（PDF/Markdown/HTML）→ Electron `resume:export` IPC；PDF = 隐藏窗口 `printToPDF` 矢量直转（不截图）。PNG 已砍（2026-08-31，PDF 够用）。
+- **PDF 导出（已实现）**：左栏「下载」菜单（PDF/Markdown/HTML）→ Electron `resume:export` IPC；PDF = 隐藏窗口 `printToPDF` 矢量直转（不截图）。**一页硬裁（2026-10-10）**：在 `printToPDF` 前对根容器注入 `body > .content{max-height:1123px;overflow:hidden}`（`insertCSS`），线下内容不进 PDF、恒出 1 页；`1123px` 与预览剪切线同值（全链路统一「96dpi px」）。截的是输出，简历数据不动。PNG 已砍（2026-08-31，PDF 够用）。
 - **「内容永不丢」从口号变机器断言**：① 生成层——每个 active fact 被某个 block 覆盖，LLM 漏了立刻报；② 渲染层——模板确定性遍历全部字段，字段在内容里就一定渲染出来。
 
 ### 13.4 编辑流水线：对话 agent 路由 → 统一简历图（人门确认）（**2026-09-09 收敛，**）
@@ -784,3 +791,7 @@ POST /chat { session_id, message }
   - **① `applied` 只说真应用了**（`soft_settle_change_records(included=)`）：结清时按**本版真进了图的**改动点判——`generate_resume` 这条路不带已确认改动，它那批 confirmed 标 `archived`（结清未应用）。旧实现不看带了什么、一律标 applied，害得新版开场引导谎报「这版做了这些调整」。`RewriteState.applied_changes` 随挂起草稿过 checkpointer 带回来。
   - **② 快照统一到「版本开始时」**（§9，推翻 2026-08-06 的「任期末」口径）：`resume_snapshots` 从「事实库快照」扩大为**工作台快照**（`user_facts` + `change_records` 整表），打点从「建下一版前给旧版打」挪到**每版创建时给这一版打**。回滚 = **整份恢复目标版开始时的工作台，直回不叠加**——不是"撤销 vN 之后的变化"，而是直接换成那一刻那一份（目标版之后新攒的改动点直接没了，目标版开始时还挂着的点原样回来）。`include_facts` 开关**删除**；回滚不再走「版本变更统一结清」（`discard` 分支随之删）。**回滚到最早一版被拒**（v1 快照是空的，恢复 = 清空工作台，那是「重置」）。**回滚引导改口径**：不再读被覆盖稿的结清记录，改由 `rollback` 在恢复**之前**捞好「真正会消失的」清单 + 起止稿号传进 `persist_opening`，说清「从哪退到哪、放弃了哪些变化」。
   - **③ 出稿提案门**（§12.6）：把「出稿前先问」从 prompt 里的**劝告**变成**系统强制**——新增 `propose_execution` 工具，`generate_resume` / `apply_suggestions` 加硬门「有提案 + 用户回过话（session user 消息条数涨过提案时那个数）」。门加在**工具层**，面板按钮路径不受影响（用户点按钮 = 明确同意）。首版也走提案。
+- **2026-10-10 页数收敛为「一页硬裁」（§2 / §13.3，取代 2026-08-28 的「不硬锁一页、逐页预览」）**：用户导出 PDF 时发现「预览看着一页、导出变两页」。根因有两层——① 预览标注线**量高口径错**：`drawGuides` 用 `documentElement.scrollHeight` 判高，而该值会被预览的 `html{zoom}`（自动适应宽度）一起缩放，同一份内容 `zoom=1` 量到 1129、`zoom=0.7` 量到 800，线随缩放漂移；② 真正把末条工作经历整块顶到第 2 页的是模板 CSS 里 `.no-alone-1::after` / `.no-alone-2::after` 的**幻影撑高**（`height:75px/150px;margin-bottom:-Npx`）+ `break-inside:avoid`——它给条目头/区块标题盒子凭空撑高、又不随字号走，把「本可塞下」的内容顶去下一页。
+  - **改法（只做一页）**：预览里画**一条**一页剪切线（页底 `1123px`，线下居中绿字提示「到此为止是一页纸…」），去掉原「有几页画几条」的多页页界 + `P2/P3` 标签；**导出 PDF 时**对根容器注入 `body > .content{max-height:1123px;overflow:hidden}`（Electron `insertCSS`，在 `printToPDF` 前）硬裁一页（实测 scale 0.5→1.5 恒出 1 页）。**截的是输出、不删数据**：简历 JSON / 各版本原样保留，调小字号或「自动一页」后线下内容重新进页。预览**不裁**（仍显示溢出内容便于调参），只画线。
+  - **单位选 px（`1123`）**：实测 `1123px` 与 `297mm` 裁剪效果一致，故不引入 mm，全链路（`fitOnePage` 求解器目标 / 预览剪切线 / 导出裁剪 / 字号令牌 / 纸宽 794px）统一到「96dpi px」一个坐标系。
+  - **删除幻影撑高**：`.no-alone-1/2::after` 及其 `break-inside:avoid` 全部移除（一页硬裁后多页分页不存在，它既无用又是高度测量干扰）；模板里 `no-alone-*` 类名保留（无害）。`@page` 去掉多余的 `width:100%`。

@@ -66,7 +66,7 @@ class ResumeTypographyUpdate(BaseModel):
 
     model_config = {"extra": "ignore"}
 
-    typography: Typography = Field(..., description="排版四参数（scale/lineHeight/spacing/letterSpacing）")
+    typography: Typography = Field(..., description="排版参数（scale/line_height/module_spacing/letter_spacing/gutter/side_width）")
 
 
 class ResumeVersionsResponse(BaseModel):

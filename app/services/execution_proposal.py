@@ -107,7 +107,7 @@ async def check(kind: ExecutionKind) -> str | None:
 
 
 def current() -> ExecutionProposal | None:
-    """当前待决提案（供 chat.py 透传前端 / prompt 注入）。"""
+    """当前待决提案（供 `_assembly.build_deep_system_prompt` 读走注入 prompt）。"""
     return _proposal
 
 
@@ -135,3 +135,38 @@ async def render_execution_plan() -> str:
     if _proposal is not None and _proposal.brief:
         lines.append(f"**你拟的指令（给用户看，确认没夹带私货）**：{_proposal.brief}")
     return "\n".join(lines)
+
+
+async def render_proposal_state() -> str:
+    """渲染「待决提案」的当前状态，注入每轮 system prompt（2026-10-09）。
+
+    修的是「用户已经答过『出吧』、agent 下一轮又被问一遍」。根因：提案状态是 agent 自己
+    记过的，却从没进过 system prompt——模型记不住就照流程重走「提案 + 问」，于是重复问。
+    本函数把它摊在每轮都会重建的 system prompt 里，让模型随时看得见「提案在不在、用户回没回话」。
+
+    与 `render_execution_plan`（提案那一刻回给 agent 念的清单）分工不同：那个是**一次性**的
+    「会带什么／不带什么」，这个是**常驻**的「提案还在不在、下一步该干嘛」。无提案 → 空串（不塞噪音）。
+    """
+    proposal = _proposal
+    if proposal is None:
+        return ""
+    kind_label = "出一版（generate）" if proposal.kind == "generate" else "开始改（apply）"
+    lines = [f"- 出稿类型：{kind_label}"]
+    if proposal.brief:
+        lines.append(f"- 你拟的指令：{proposal.brief}")
+    sess = await current_session()
+    session_id = sess.id if sess is not None and sess.id is not None else 0
+    turns = await _user_turn_count(session_id) if session_id else 0
+    if turns > proposal.user_turns:
+        lines.append(
+            "- 用户**已经回过话了**（提案之后至少说了 1 句）。**本轮别再提一遍、别再问**——"
+            "直接调对应的出稿工具（generate_resume / apply_suggestions）执行这一版即可；"
+            "除非用户这句其实说了「先别出 / 再聊聊 / 还要改」，那就听用户的、别出稿。"
+        )
+    else:
+        lines.append(
+            "- 用户**还没回话**（提案刚提，你还在等他答复）。**本轮不能执行**——"
+            "把提案讲清楚、问他「现在出一版，还是先聊完」，然后停下等人。"
+        )
+    return "\n".join(lines)
+

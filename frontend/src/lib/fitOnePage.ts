@@ -3,10 +3,10 @@ import type { Typography } from '@/stores/resumeStore'
 /**
  * 自动一页求解器（2026-09-02 grill 定稿）：纯函数，零 DOM/网络，便于测试。
  *
- * 只解 3 个松紧参数（scale/line_height/spacing）；gutter/letter_spacing 冻结不动
+ * 只解 3 个松紧参数（scale/line_height/module_spacing）；gutter/letter_spacing 冻结不动
  * （gutter 是版式结构、letter_spacing 影响宽度不影响高度，都不进求解器）。
  *
- * 注意两套命名的边界：`SOLVE_RANGE`/`ParamRange` 里的键（如 `lineHeight`）是**求解器自己的
+ * 注意两套命名的边界：`SOLVE_RANGE`/`ParamRange` 里的键（如 `lineHeight`/`moduleSpacing`）是**求解器自己的
  * 范围常量**，与 Typography 字段名无关，保持驼峰；访问 Typography 时一律用其蛇形真实字段名。
  *
  * 算法 = 预估锚点 + 等比例协同小步 + 撞限让位：
@@ -29,8 +29,8 @@ const EPS = 2
 export interface ParamRange { min: number; max: number }
 export const SOLVE_RANGE = {
   scale: { min: 0.5, max: 1.2 }, // 上限 1.2（手动 1.5），放大填充的观感极限
-  lineHeight: { min: 1.0, max: 1.5 },
-  spacing: { min: 0, max: 1.5 },
+  lineHeight: { min: 0.5, max: 1.5 },
+  moduleSpacing: { min: 0, max: 1.5 },
 } as const
 
 /** 迭代上限（防意外死循环；bracket 二分下正常 20 轮内收敛）。 */
@@ -68,7 +68,7 @@ export async function solveOnePage(
     ...a,
     scale: round2((a.scale + b.scale) / 2),
     line_height: round2((a.line_height + b.line_height) / 2),
-    spacing: round2((a.spacing + b.spacing) / 2),
+    module_spacing: round2((a.module_spacing + b.module_spacing) / 2),
   })
 
   // 冷启动：先量起点，确定第一个 bracket 端 + 初始逼近方向
@@ -83,7 +83,7 @@ export async function solveOnePage(
     ...start,
     scale: round2(clamp(start.scale * anchor, SOLVE_RANGE.scale)),
     line_height: round2(clamp(start.line_height * anchor, SOLVE_RANGE.lineHeight)),
-    spacing: round2(clamp(start.spacing * anchor, SOLVE_RANGE.spacing)),
+    module_spacing: round2(clamp(start.module_spacing * anchor, SOLVE_RANGE.moduleSpacing)),
   }
 
   for (let i = 0; i < MAX_ITER; i++) {
@@ -103,13 +103,13 @@ export async function solveOnePage(
           ...start,
           scale: SOLVE_RANGE.scale.min,
           line_height: SOLVE_RANGE.lineHeight.min,
-          spacing: SOLVE_RANGE.spacing.min,
+          module_spacing: SOLVE_RANGE.moduleSpacing.min,
         }
       : {
           ...start,
           scale: SOLVE_RANGE.scale.max,
           line_height: SOLVE_RANGE.lineHeight.max,
-          spacing: SOLVE_RANGE.spacing.max,
+          module_spacing: SOLVE_RANGE.moduleSpacing.max,
         }
     const he = await measure(edge)
     if (he >= minH - EPS && he <= maxH + EPS) return { ok: true, typography: edge }

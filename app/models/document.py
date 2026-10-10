@@ -34,7 +34,7 @@ class ResumeDocument(SQLModel, table=True):
     html: str = Field(default="")  # 生成版渲染快照（固定模板从 resume_json 渲染的完整 HTML 文档）
     summary: str = Field(default="")  # 一句话版本简述（Git 意味，S8 2026-08-14）：LLM 产出时顺带吐，上传 v1 规则名「最初版本」
     scale: float = Field(default=1.0)  # 控件 A 字号阶梯（2026-09-02 落库挂版本）：排版松紧度，1.0=基准字号；上传 v1 无意义留 1.0
-    typography: str = Field(default="")  # 排版自由度配置（2026-09-02 四参数收成一列）：JSON 字符串，承载 scale/lineHeight/spacing/letterSpacing；空=默认 Typography。读侧以它为准（scale 列是迁移期遗留）
+    typography: str = Field(default="")  # 排版自由度配置（2026-09-02 收成一列）：JSON 字符串，承载 scale/line_height/module_spacing/letter_spacing/gutter/side_width；空=默认 Typography。读侧以它为准（scale 列是迁移期遗留）
     source: str = Field(default="upload")  # upload / generated（`rollback` 为旧纯追加回滚的遗留值，软作废回滚不再产生新行）
     original_name: str = Field(default="")  # 上传原件文件名（仅上传版有；软作废回滚不复制，作废稿保留其原件）
     original_ext: str = Field(default="")  # 上传原件扩展名（小写无点，驱动前端预览分档）

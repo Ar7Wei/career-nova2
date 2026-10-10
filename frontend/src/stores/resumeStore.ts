@@ -106,8 +106,9 @@ function toChatMessages(msgs: BackendMessage[]): ChatMessage[] {
 }
 
 /** 后端 /documents/versions 里的一版。 */
-/** 排版自由度五参数（2026-09-02 grill）：scale 字号倍率 / line_height 行距倍率 / spacing 段距倍率 /
-    letter_spacing 字间距 px / gutter 栏距 px（左右两栏缝隙）。
+/** 排版自由度参数（2026-09-02 grill，2026-10-09 加 side_width、段距→模块间距 module_spacing）：
+    scale 字号倍率 / line_height 行距倍率 / module_spacing 模块间距倍率 / letter_spacing 字间距 px /
+    gutter 栏距 px（左右两栏缝隙）/ side_width 右栏宽度 %。
  *
  * ⚠️ **键名按后端 `app/schemas/resume.py::Typography` 原样写（蛇形）**，不做驼峰转换——
  * 本仓无 snake↔camel 转换层，`created_at`/`original_name`/`resume_json` 等入前端时同样原样
@@ -117,12 +118,25 @@ function toChatMessages(msgs: BackendMessage[]): ChatMessage[] {
 export interface Typography {
   scale: number
   line_height: number
-  spacing: number
+  module_spacing: number
   letter_spacing: number
   gutter: number
+  side_width: number
 }
-/** 默认排版配置（与后端 Typography() 对齐）。 */
-export const DEFAULT_TYPOGRAPHY: Typography = { scale: 1, line_height: 1.25, spacing: 1, letter_spacing: 0, gutter: 55 }
+/** 默认排版配置（与后端 Typography() 对齐；行距默认 1.0=模板出厂基准，2026-10-09 拨正）。 */
+export const DEFAULT_TYPOGRAPHY: Typography = { scale: 1, line_height: 1, module_spacing: 1, letter_spacing: 0, gutter: 55, side_width: 28 }
+
+/** 洗一道后端来的 typography（2026-10-09 改名自愈）：老数据带旧 `spacing` 键 → 搬到 `module_spacing`；
+    缺字段补默认值。后端本已自愈，这里兜一层前端直读场景的底。 */
+function normalizeTypography(raw: Typography | (Partial<Typography> & { spacing?: number }) | undefined): Typography {
+  if (!raw) return DEFAULT_TYPOGRAPHY
+  const legacy = raw as { spacing?: number }
+  return {
+    ...DEFAULT_TYPOGRAPHY,
+    ...raw,
+    module_spacing: raw.module_spacing ?? legacy.spacing ?? DEFAULT_TYPOGRAPHY.module_spacing,
+  }
+}
 
 /** 后端 /documents/versions 里的一版。 */
 interface ResumeVersion {
@@ -133,7 +147,7 @@ interface ResumeVersion {
   resume_json?: string
   /** 渲染快照（2026-08-28）：固定模板从 resume_json 渲染的 HTML；上传 v1 为空。 */
   html: string
-  /** 排版自由度配置（2026-09-02 四参数挂版本）：scale/line_height/spacing/letter_spacing；上传 v1 为默认。 */
+  /** 排版自由度配置（2026-09-02 四参数挂版本）：scale/line_height/module_spacing/letter_spacing；上传 v1 为默认。 */
   typography?: Typography
   /** 一句话版本简述（Git 意味，S8 2026-08-14）；旧数据空串。 */
   summary: string
@@ -199,7 +213,7 @@ interface ResumeState {
   previewMarkdown: string
   /** 当前简历文档的排版层 HTML（2026-08-13 双源分层）：排版 agent 渲染，左栏 iframe 展示；空 = 无排版层）。 */
   previewHtml: string
-  /** 排版自由度配置（2026-09-02 挂版本，排版参数/数据层）：当前版四参数（字号/行距/段距/字间距）。
+  /** 排版自由度配置（2026-09-02 挂版本，排版参数/数据层）：当前版参数（字号/行距/模块间距/字间距/栏距/右栏宽）。
    *  调它 = 改内容排版（重排、页数变），防抖回后端重渲染落库，导出关联。与控件 B 整页缩放（纯预览镜头）独立。 */
   typography: Typography
   /** 全部版本列表。 */
@@ -1038,7 +1052,7 @@ export const useResumeStore = create<ResumeState>((set, get) => ({
         currentSource: doc.source ?? '',
         previewMarkdown: doc.markdown,
         previewHtml: doc.html ?? '',
-        typography: doc.typography ?? DEFAULT_TYPOGRAPHY,
+        typography: normalizeTypography(doc.typography),
         originalName,
         originalExt,
         resumeUrl,
