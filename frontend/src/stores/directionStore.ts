@@ -28,6 +28,9 @@ interface DirectionState {
 
   load: () => Promise<void>
   loadCities: () => Promise<void>
+  /** 带外部诊断提炼方向提案（投递提案·收紧检索词）：POST /direction/refine {hint}。
+   *  **只读不落库**——返回 proposed（无 facts 可提炼则 null），前端预填草稿、人工拍板才 commit。 */
+  refineWithHint: (hint: string) => Promise<Direction | null>
   /** 拍板方向：POST /direction/commit，返回待处置的未处理岗位数（>0 调用方就地弹确认）。
    *  cities 与 keywords 平行等长、逐组必填（ADR 0019）。 */
   commit: (role: string, keywords: string[][], cities: string[]) => Promise<number>
@@ -65,6 +68,14 @@ export const useDirectionStore = create<DirectionState>((set) => ({
     } finally {
       set({ citiesLoading: false })
     }
+  },
+
+  refineWithHint: async (hint) => {
+    const { data } = await api.post<{ current: Direction | null; proposed: Direction | null }>(
+      '/v1/direction/refine',
+      { hint },
+    )
+    return data.proposed
   },
 
   commit: async (role, keywords, cities) => {

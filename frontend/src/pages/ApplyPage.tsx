@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowUp, ArrowDown, Calendar, Sparkles, Tag } from 'lucide-react'
+import { ArrowUp, ArrowDown, Calendar, Tag } from 'lucide-react'
 import { Badge, Button, Modal, Menu, Select, Tabs, TextInput, Group } from '@mantine/core'
 import { useClickOutside } from '@mantine/hooks'
 import { DayPicker, type DateRange as DayPickerRange } from 'react-day-picker'
@@ -124,8 +124,6 @@ function TabTimeControls() {
   const tab = useApplyStore((s) => s.tab)
   const order = useApplyStore((s) => s.orderByTab[tab])
   const setOrder = useApplyStore((s) => s.setOrder)
-  const sort = useApplyStore((s) => s.sortByTab[tab])
-  const setSort = useApplyStore((s) => s.setSort)
   const range = useApplyStore((s) => s.rangeByTab[tab])
   const setDateRange = useApplyStore((s) => s.setDateRange)
   const reasonFilter = useApplyStore((s) => s.reasonFilter)
@@ -133,7 +131,6 @@ function TabTimeControls() {
   const [open, setOpen] = useState(false)
   const wrapRef = useClickOutside(() => setOpen(false))
   const isNotPursuing = tab === 'not_pursuing'
-  const isUnprocessedTab = tab === 'unprocessed'
   const labelKey = TIME_LABEL_KEY[tab as Exclude<StatusTab, 'interviewing'>]
 
   const selected: DayPickerRange | undefined = range?.start || range?.end
@@ -157,20 +154,8 @@ function TabTimeControls() {
 
   return (
     <div className="apply-controls">
-      {/* 未处理 tab 独有：匹配度排序开关（ADR 0023）——「先投最契合的」。
-          其它 tab 无此钮（已投/录用/放弃看的是处理时间，不是契合度）。 */}
-      {isUnprocessedTab && (
-        <Button
-          variant="subtle"
-          size="compact-sm"
-          className={`apply-match-toggle${sort === 'match' ? ' is-on' : ''}`}
-          leftSection={<Sparkles size={13} />}
-          onClick={() => setSort(sort === 'match' ? 'time' : 'match')}
-          title={t('apply.sortByMatchHint')}
-        >
-          {t('apply.sortByMatch')}
-        </Button>
-      )}
+      {/* 「按匹配度排序」已移到分析报告的「投递提案」行动区（2026-10-11）——它本就是分析
+          建议的一部分（先投最契合的），收在报告里比散在工具栏更顺；此处不再有匹配度开关。 */}
       <span className="apply-time-key">{t(labelKey)}</span>
       <div className="apply-time-pill" ref={wrapRef}>
         {/* 共用外壳：描边 + 圆角 + 底都在这层，两段内层去描边去圆角透明底。 */}

@@ -18,7 +18,11 @@ import asyncio
 from fastapi import APIRouter, Query
 
 from app.core.logging import logger
-from app.schemas.analysis import AnalysisReportOut
+from app.schemas.analysis import (
+    AnalysisReportOut,
+    ProposalActionOut,
+    ProposalApplyRequest,
+)
 from app.services import analysis as analysis_service
 
 router = APIRouter()
@@ -112,3 +116,20 @@ async def interview_analysis(interview_id: int) -> AnalysisReportOut:
     if not analysis_service.is_computing("interview", key):
         _spawn(analysis_service.refresh_interview(interview_id))
     return _placeholder("interview", key, "computing")
+
+
+@router.post("/analysis/proposal/apply", response_model=ProposalActionOut)
+async def apply_proposal(req: ProposalApplyRequest) -> ProposalActionOut:
+    """执行「剔除偏岗」提案：把本轮报告的 drop_jobs 落到跟进状态线（not_pursuing/withdrawn）。
+
+    id 由服务端从缓存报告现读（不信前端递来的清单）；落实后记 `drop=applied`。幂等。
+    """
+    count = await analysis_service.apply_drop_proposal(req.round_id)
+    return ProposalActionOut(status="applied", count=count)
+
+
+@router.post("/analysis/proposal/dismiss", response_model=ProposalActionOut)
+async def dismiss_proposal(req: ProposalApplyRequest) -> ProposalActionOut:
+    """忽略某类提案（drop / refine）：记 `dismissed`。幂等；报告本身不动。"""
+    await analysis_service.dismiss_proposal(req.round_id, req.kind)
+    return ProposalActionOut(status="dismissed")

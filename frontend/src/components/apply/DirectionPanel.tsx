@@ -103,6 +103,9 @@ export function DirectionPanel() {
   const update = useSettingsStore((s) => s.update)
   const unprocessed = useApplyStore((s) => s.counts.unprocessed)
   const kick = useApplyStore((s) => s.kick)
+  // 投递提案·收紧检索词：refine 出的提案（预填草稿），拍板后清诊断（收横幅）。
+  const refineProposed = useApplyStore((s) => s.refineProposed)
+  const clearRefineHint = useApplyStore((s) => s.clearRefineHint)
 
   const [keywords, setKeywords] = useState<string[][]>([[]])
   const [groupCities, setGroupCities] = useState<string[]>([''])
@@ -121,12 +124,22 @@ export function DirectionPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 当前方向变化 → 回填草稿（城市与查询组平行等长，ADR 0019）
+  // 当前方向变化 → 回填草稿（城市与查询组平行等长，ADR 0019）。
+  // 收紧检索词流程中（refineProposed 在）不覆盖——否则 load() 晚于 refine 返回时会把预填冲掉。
   useEffect(() => {
+    if (refineProposed) return
     const kws = direction?.keywords ?? [[]]
     setKeywords(kws)
     setGroupCities(Array.from({ length: kws.length }, (_, i) => direction?.cities[i] ?? ''))
-  }, [direction])
+  }, [direction, refineProposed])
+
+  // 收紧检索词预填（投递提案）：refine 提案到位 → 覆盖草稿供人复核（不落库；空串城市留给用户填）。
+  // 独立于上面的 direction 回填——只在 refineProposed 变非空时触发一次。
+  useEffect(() => {
+    if (!refineProposed) return
+    setKeywords(refineProposed.keywords.length > 0 ? refineProposed.keywords : [[]])
+    setGroupCities(Array.from({ length: refineProposed.keywords.length }, (_, i) => refineProposed.cities[i] ?? ''))
+  }, [refineProposed])
 
   /** 清洗关键词（去空白词条、去空组）。 */
   const clean = (groups: string[][]) =>
@@ -166,6 +179,7 @@ export function DirectionPanel() {
           await disposeUnprocessed()
         })
       }
+      clearRefineHint()  // 收紧检索词已拍板 → 收横幅、清预填源
       notifications.show({ color: 'green', title: t('apply.consoleCriteria'), message: t('apply.directionSaved') })
     } catch (err) {
       notifications.show({ color: 'red', title: t('apply.consoleCriteria'), message: userErrorText(err) })

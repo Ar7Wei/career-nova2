@@ -30,3 +30,25 @@ class AnalysisReport(SQLModel, table=True):
     # 处方**不在这里**——它是 `optimization_pending` 的行（status=proposed），随优化点状态机走。
     content: str = Field(default="{}")
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class AnalysisProposalState(SQLModel, table=True):
+    """投递提案的**生命周期状态**（2026-10-11，ADR 0023 补缺）。
+
+    报告本身是**缓存**（`analysis_reports`，算一次存一次、内容不变），而提案要能被
+    「执行 / 忽略」——这个状态不能写进缓存报告里，否则每次重算都被冲掉、且报告就不纯了。
+    故单开一张表记「某轮某类提案的处置」，与报告分家：报告管「讲什么」，本表管「办了没」。
+
+    - `proposal_kind`：`drop`（剔除偏岗）/ `refine`（收紧检索词）。
+    - `status`：`pending`（待办，缺省）/ `applied`（已执行）/ `dismissed`（已忽略）。
+    唯一 (scope, scope_key, proposal_kind)；无行 = pending（不必为「待办」写行）。
+    """
+
+    __tablename__ = "analysis_proposal_state"
+
+    id: int | None = Field(default=None, primary_key=True)
+    scope: str = Field(index=True)  # batch（暂只有 batch 出提案）
+    scope_key: str = Field(index=True)  # 轮次 id
+    proposal_kind: str = Field(index=True)  # 'drop' | 'refine'
+    status: str = Field(default="pending")  # pending | applied | dismissed
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

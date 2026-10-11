@@ -26,6 +26,7 @@
 | `interviews` | 面试场次（一个岗位 0..N 场；日历数据源，编年可追溯） | 已实现（2026-08-31 定稿） |
 | `crawl_state` | 抓取进度（续页游标 + 单平台三态） | 已实现（2026-08-31 定稿） |
 | `analysis_reports` | 投递页分析报告缓存（batch/daily/interview 三 scope，算一次存一次） | 已实现（2026-09-14 定稿） |
+| `analysis_proposal_state` | 投递提案的处置状态（待办/已执行/已忽略，2026-10-11） | 已实现 |
 
 ### `settings`
 后端**用户偏好**单行存储（key 固定 `'app'`），整份 `AppSettings` 序列化为 JSON 放 `value`。
@@ -171,7 +172,7 @@
 | `changes` | TEXT(JSON) | **改动点（改什么）**：`[{id, target, original, suggested, status, type, severity}]`，**可空数组**（原因先行、子项后补）；子项 **id 记录内唯一 + 自带 status**（操作粒度 = 单条子项）；`type`/`severity` 供面板展示改哪类、多要紧 |
 | `status` | TEXT（index） | 记录级兜底状态（子项全空时 / 整条存废）：pending/discussing/.../archived |
 | `kind` | TEXT（index） | `change` 本轮整改（用完即随版本结清）/ `decision` **跨版本持续决策**（每版注入生成/改写 prompt） |
-| `origin` | TEXT（index） | `agent`（聊天 agent 提的）/ `job_analysis`（**历史**：投递页处方产；2026-10-11 起无新产出，ADR 0023——值保留、老数据仍走帘子与定论端点） |
+| `origin` | TEXT（index） | `agent`（聊天 agent 提的）/ `job_analysis`（**历史**：投递页处方产；**2026-10-11 起无新产出**——值保留、老数据仍走帘子与定论端点） |
 | `session_id` | INTEGER（index） | 提出会话 |
 | `document_id` | INTEGER（index） | 基于哪版 |
 | `resolved_in_document_id` | INTEGER（index，可空） | 哪版被结清；NULL=活跃 |
@@ -327,18 +328,37 @@
 | `id` | INTEGER PK | 自增 |
 | `scope` | TEXT（index） | `batch` 未处理批次 / `daily` 已投递日报 / `interview` 单场面试准备 |
 | `scope_key` | TEXT（index） | `batch` = 抓取轮次 id / `daily` = **本地日**（`YYYY-MM-DD`，UTC+8）/ `interview` = 场次 id |
-| `content` | TEXT | 报告结构化内容（JSON 文本列）：**batch / daily 都是** `{headline, blocks, meta?}`（块流见下）；interview 仍 `{headline, body}`（纯叙事，读模型层把 `body` 折成单个 text 块） |
+| `content` | TEXT | 报告结构化内容（JSON 文本列）：**batch** = `{headline, blocks, meta?, drop_jobs?, refine_hint?}`（块流 + 投递提案）；**daily** = `{headline, blocks}`；interview 仍 `{headline, body}`（纯叙事，读模型层把 `body` 折成单个 text 块） |
 | `created_at` | DATETIME | 生成时间 |
 
 设计要点：
-- **`content` 只装报告，不装处方（2026-10-11 起）**：报告叙事（供给分析/日报/面试 tips）在这里。**投递分析不再产处方**（ADR 0023：投递分析只做供给分析，不答「你缺什么技能」——技能缺口要逐岗 JD、投递前拿不到）。改进建议仍由聊天 agent 的 `suggest_improvements` 出、落 `change_records`（`origin=agent`），与本表无关。
-- **`blocks`（2026-09-15 文/图穿插）**：`batch`/`daily` 报告的 content 带 `blocks: list[ReportBlock]`——analyze Agent 按叙述顺序产出的 `text`/`chart` 块（**图穿插在段落之间**，0~4 张、宁缺勿滥）。`ReportBlock` 契约见 `app/schemas/report_block.py`（text=Markdown 段 / chart 内嵌 `ChartSpec`，后者见 `app/schemas/chart.py`：6 种图型、series ≤ 2、字段须在 data 内）。读缓存时逐块校验（`_parse_blocks`），坏块（kind 不认得 / chart spec 配错）丢弃降级、不拖垮整份；**兼容旧缓存**——无 `blocks` 只有 `body` 时折成单个 text 块。前端另有 `toReportBlocks` + `isChartSpec` 兜底。
+- **`content` 只装报告，不装处方（2026-10-11 起）**：报告叙事（供给分析/日报/面试 tips）在这里。**投递分析不再产处方**（只做供给分析，不答「你缺什么技能」——技能缺口要逐岗 JD、投递前拿不到）。改进建议仍由聊天 agent 的 `suggest_improvements` 出、落 `change_records`（`origin=agent`），与本表无关。
+- **投递提案存 `content`（2026-10-11）**：`batch` 报告的 content 另带 **`drop_jobs`**（建议剔除的偏岗 `[{id,title,company}]`，id 已校验 ⊆ 本轮、标题/公司以 DB 为准）+ **`refine_hint`**（检索词诊断文本）。**不是独立表**——提案随报告缓存一起「算一次存一次」，附着在 `scope_key` 那轮上；前端读报告时取、渲染成「剔除/收紧」按钮，**人点确认才执行**。空 `drop_jobs`/空 `refine_hint` = 无可执行提案（正当）。**提案的处置（执行/忽略）不在这里**——见下 `analysis_proposal_state`（报告是缓存、内容不变，处置单存一张表）。
+- **`blocks`（2026-09-15 文/图穿插；2026-10-11 加 `section`）**：`batch`/`daily` 报告的 content 带 `blocks: list[ReportBlock]`——analyze Agent 按叙述顺序产出的 `section`（小节标题，把报告脊柱「门槛/风险/提案」分层）/`text`/`chart` 块（**图穿插在段落之间**，0~4 张、宁缺勿滥）。`ReportBlock` 契约见 `app/schemas/report_block.py`（section=主题词标题 / text=Markdown 段 / chart 内嵌 `ChartSpec`，后者见 `app/schemas/chart.py`：6 种图型、series ≤ 2、字段须在 data 内）。读缓存时逐块校验（`_parse_blocks`），坏块（kind 不认得 / chart spec 配错 / section 空标题）丢弃降级、不拖垮整份；**兼容旧缓存**——无 `blocks` 只有 `body` 时折成单个 text 块。前端另有 `toReportBlocks` + `isChartSpec` 兜底。
 - **不存"未就绪"行**：算完才写；读不到 = 该 scope 还没算过，由 `GET /analysis/*` 补算（起后台任务返回 `computing`，前端轮询）。
 - **`batch` 的 scope_key = 轮次 id**——分析输入 = **本轮抓到的那批**（检索条件会改、轮次间不可比，§11.7 grill 定）。无岗位的轮次 → 路由返回 `missing`，不起任务、不写报告。
 - **`daily` 的 scope_key = 本地日的昨天**——报告是**日期的纯函数**（"截至昨天"，§11.7.5），同一日期永只算一份、永不需复算。**坑**：代码全 UTC，而"今天"是本地日（UTC+8）——按 UTC 算会把今天投的岗算进昨天。
 - **`interview` 的 scope_key = 场次 id**——展开该场次时算。
 - **两种数据源两种分析法**（`batch`）：猎聘（无 JD、扫描列表字段）代码聚合；前程无忧（有 JD）逐岗读 JD 提炼。`meta.with_jd` 供前端标注"深度/概览"。**2026-09-15 graph 化**：batch 改走 `graphs/analysis.py`（load → prepare → compute_stats → analyze → persist），analyze 用带工具位的 Agent，详见 apply.md §11.7.6。**2026-10-11**：`prepare` 现算用户门槛画像（从当前简历成品的 `resume_json`）注入 `compute_stats`，报告据 `StatsPack.gate` 讲「你的门槛过几成」。
 - **核爆随 reset 清空**（派生缓存，不继承）。
+
+### `analysis_proposal_state`
+**投递提案的处置状态**（apply.md §11.7，2026-10-11）——提案要能被「执行 / 忽略」，这个状态不能写进缓存的报告里（报告内容不变、重算不得冲掉它）。故与 `analysis_reports` 分家：报告管「讲什么」，本表管「办了没」。
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `id` | INTEGER PK | 自增 |
+| `scope` | TEXT（index） | `batch`（暂只有批次出提案） |
+| `scope_key` | TEXT（index） | 轮次 id |
+| `proposal_kind` | TEXT（index） | `drop` 剔除偏岗 / `refine` 收紧检索词 |
+| `status` | TEXT | `pending` 待办 / `applied` 已执行 / `dismissed` 已忽略 |
+| `updated_at` | DATETIME | 状态变更时间 |
+
+设计要点：
+- **无行 = pending**——只为「已执行 / 已忽略」写行，待办不必占行（读口缺省返回空）。
+- **唯一 `(scope, scope_key, proposal_kind)`**：同轮同类提案只有一条状态，覆盖式更新。
+- **`drop` 的 applied 与执行副作用解耦**：`POST /analysis/proposal/apply` 先逐条落 `job_followup_events`（岗位离「未处理」），再记 `drop=applied`。
+- **核爆随 reset 清空**（与 `analysis_reports` 同命——上一段求职的派生态，不继承）。
 
 ## 配置三真相源（别搞混）
 > 三条真相源为（`.env` / Electron `settings.json` / 后端 `settings` 表）。本文件只记对本表的影响，不复述整套规则：

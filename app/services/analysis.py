@@ -44,10 +44,10 @@ from app.repositories import analysis as reports_repo
 from app.repositories import documents as docs_repo
 from app.repositories import jobs as jobs_repo
 from app.repositories.facts import list_facts
-from app.schemas.analysis import AnalysisReportOut
+from app.schemas.analysis import AnalysisReportOut, DropJob
 from app.schemas.analysis_graph import AnalysisState, UserProfile
-from app.schemas.jobs import Job
-from app.schemas.report_block import ChartBlock, ReportBlock, TextBlock
+from app.schemas.jobs import FollowupEventCreate, Job
+from app.schemas.report_block import ChartBlock, ReportBlock, SectionBlock, TextBlock
 from app.services.analysis_stats import extract_user_profile
 from app.services.llm import llm_service
 from app.utils.facts import flatten_facts
@@ -214,12 +214,44 @@ async def _distill_with_jd(jobs: list[Job]) -> list[str]:
 
 
 async def read_batch(round_id: int) -> AnalysisReportOut | None:
-    """读缓存的批次报告；没算过返回 None（§11.7.5 有则读）。"""
+    """读缓存的批次报告；没算过返回 None（§11.7.5 有则读）。
+
+    顺带回带**提案处置**（`analysis_proposal_state`）——报告是缓存、内容不变，处置单存一张表；
+    前端据此把「剔除 / 忽略」按钮换成「已剔除 / 已忽略」标记。
+    """
     cached = await reports_repo.get_report("batch", str(round_id))
     if cached is None:
         return None
     content, created = cached
-    return _batch_out_from_content(str(round_id), content, created)
+    out = _batch_out_from_content(str(round_id), content, created)
+    out.proposal_state = await reports_repo.get_proposal_states("batch", str(round_id))
+    return out
+
+
+async def apply_drop_proposal(round_id: int) -> int:
+    """执行「剔除偏岗」提案：把本轮报告的 drop_jobs 逐条落到跟进状态线（not_pursuing/withdrawn）。
+
+    **id 从缓存报告现读**（不信前端递来的一份可能过期的清单——报告缓存可能已过期）。
+    已删除的岗跳过（repo 返 None），幂等、不报错。落实后把提案状态记 `drop=applied`。返回剔除条数。
+    """
+    report = await read_batch(round_id)
+    count = 0
+    if report is not None:
+        for d in report.drop_jobs:
+            created = await jobs_repo.add_followup_event(
+                d.id, FollowupEventCreate(status="not_pursuing", reason="withdrawn")
+            )
+            if created is not None:
+                count += 1
+    await reports_repo.set_proposal_state("batch", str(round_id), "drop", "applied")
+    logger.info("analysis_proposal_drop_applied", round_id=round_id, count=count)
+    return count
+
+
+async def dismiss_proposal(round_id: int, kind: str) -> None:
+    """忽略某类提案（drop / refine）：记 `dismissed`。幂等。报告本身不动。"""
+    await reports_repo.set_proposal_state("batch", str(round_id), kind, "dismissed")
+    logger.info("analysis_proposal_dismissed", round_id=round_id, kind=kind)
 
 
 async def batch_has_input(round_id: int) -> bool:
@@ -273,6 +305,8 @@ async def _compute_batch(round_id: int, key: str) -> AnalysisReportOut | None:
         headline=state.headline,
         blocks=state.blocks,
         meta=state.meta,
+        drop_jobs=state.drop_jobs,
+        refine_hint=state.refine_hint,
     )
 
 
@@ -318,28 +352,36 @@ async def _user_profile() -> UserProfile | None:
 
 
 async def _persist_batch(state: AnalysisState) -> None:
-    """落库：报告（含块流）→ analysis_reports。
+    """落库：报告（含块流）+ 投递提案 → analysis_reports。
 
     2026-10-11（ADR 0023）：原「处方 → change_records（origin=job_analysis）」一条路径已删——
-    批次分析不再产处方。落库只剩报告本身。
+    批次分析不再产处方。落库 = 报告本身 + 投递提案（剔除偏岗 id 清单 + 检索词诊断）——
+    提案是**可执行载体**，前端读了渲染成「剔除/收紧」按钮，人点确认才执行。
     """
     content = json.dumps(
         {
             "headline": state.headline,
             "blocks": [b.model_dump() for b in state.blocks],
             "meta": state.meta,
+            "drop_jobs": [d.model_dump() for d in state.drop_jobs],
+            "refine_hint": state.refine_hint,
         },
         ensure_ascii=False,
     )
     await reports_repo.save_report("batch", state.scope_key, content)
-    logger.info("analysis_batch_done", scope_key=state.scope_key, total=state.meta.get("total"))
+    logger.info(
+        "analysis_batch_done",
+        scope_key=state.scope_key,
+        total=state.meta.get("total"),
+        drops=len(state.drop_jobs),
+    )
 
 
 def _parse_blocks(data: dict) -> list[ReportBlock]:
     """Content JSON → 正文块流。
 
-    优先读新版 `blocks`；坏块（kind 不认得 / chart spec 配错）单独丢弃、不拖垮整份报告。
-    兼容旧缓存：没有 `blocks` 只有 `body` 时 → 折成单个 text 块（旧报告照样能读）。
+    优先读新版 `blocks`；坏块（kind 不认得 / chart spec 配错 / section 空标题）单独丢弃、
+    不拖垮整份报告。兼容旧缓存：没有 `blocks` 只有 `body` 时 → 折成单个 text 块（旧报告照样能读）。
     """
     raw = data.get("blocks")
     if isinstance(raw, list):
@@ -348,7 +390,11 @@ def _parse_blocks(data: dict) -> list[ReportBlock]:
             try:
                 if not isinstance(item, dict):
                     continue
-                if item.get("kind") == "text":
+                if item.get("kind") == "section":
+                    title = str(item.get("title", "")).strip()
+                    if title:
+                        blocks.append(SectionBlock(title=title))
+                elif item.get("kind") == "text":
                     md = str(item.get("md", ""))
                     if md.strip():
                         blocks.append(TextBlock(md=md))
@@ -362,8 +408,18 @@ def _parse_blocks(data: dict) -> list[ReportBlock]:
 
 
 def _batch_out_from_content(key: str, content: str, created: str) -> AnalysisReportOut:
-    """JSON 文本 → 读模型（缓存命中路径）。块流经 _parse_blocks 兜底（坏块丢、旧 body 兼容）。"""
+    """JSON 文本 → 读模型（缓存命中路径）。块流经 _parse_blocks 兜底（坏块丢、旧 body 兼容）。
+
+    投递提案（drop_jobs/refine_hint）旧缓存没有 → 缺省空（老报告照读、只是没有可执行载体）。
+    坏 drop_jobs 条目单条丢、不拖垮报告。
+    """
     data = json.loads(content)
+    drop_jobs: list[DropJob] = []
+    for item in data.get("drop_jobs", []) or []:
+        try:
+            drop_jobs.append(DropJob(**item) if isinstance(item, dict) else DropJob(id=int(item)))
+        except Exception:  # noqa: BLE001 - 坏条目丢弃，不拖垮整份报告
+            logger.warning("analysis_drop_job_invalid")
     return AnalysisReportOut(
         scope="batch",
         scope_key=key,
@@ -371,6 +427,8 @@ def _batch_out_from_content(key: str, content: str, created: str) -> AnalysisRep
         blocks=_parse_blocks(data),
         meta=data.get("meta", {}),
         created_at=created,
+        drop_jobs=drop_jobs,
+        refine_hint=str(data.get("refine_hint", "")),
     )
 
 

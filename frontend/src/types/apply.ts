@@ -116,13 +116,25 @@ export type AnalysisScope = 'batch' | 'daily' | 'interview'
 /** 报告就绪态：ready 有缓存 / computing 正在算（前端轮询）/ missing 没东西可算。 */
 export type AnalysisStatus = 'ready' | 'computing' | 'missing'
 
+/** 投递提案·剔除偏岗的一条（ADR 0023）：分析挑出的偏岗（标题/公司以 DB 为准）。
+ *  前端渲染成清单 → 人确认 → 落跟进状态线（no_pursuing / withdrawn）。理由在报告正文里说。 */
+export interface DropJob {
+  id: number
+  title: string
+  company: string
+}
+
+/** 提案种类与生命周期（2026-10-11）：报告是缓存、内容不变，提案处置单存一张表。 */
+export type ProposalKind = 'drop' | 'refine'
+export type ProposalStatus = 'pending' | 'applied' | 'dismissed'
+
 /** 一份分析报告（GET /analysis/*）。headline 一句话 + blocks 正文块流 + meta 统计口径。 */
 export interface AnalysisReport {
   scope: AnalysisScope
   scopeKey: string
   status: AnalysisStatus
   headline: string
-  /** 正文块流（text/chart 穿插，前端经 toReportBlocks 校验兜底渲染，坏块降级不崩）。 */
+  /** 正文块流（section/text/chart 穿插，前端经 toReportBlocks 校验兜底渲染，坏块降级不崩）。 */
   blocks: ReportBlock[]
   meta: {
     total?: number
@@ -131,6 +143,12 @@ export interface AnalysisReport {
     withJd?: number
   }
   createdAt: string
+  /** 投递提案·剔除偏岗（未处理批次才有；空 = 没可剔的）。人点确认才执行。 */
+  dropJobs: DropJob[]
+  /** 投递提案·检索词诊断（哪组词捞歪了）；空 = 检索词无需动。喂 refine 出提案、人拍板。 */
+  refineHint: string
+  /** 提案处置（kind→status；缺省的 kind = pending）。前端据此把按钮换成「已剔除/已忽略」标记。 */
+  proposalState: Partial<Record<ProposalKind, ProposalStatus>>
 }
 
 /** 一个求职方向（apply.md §11.2）：role 与 keywords 独立，互不派生。 */

@@ -45,6 +45,9 @@ interface ToolTabProps {
    *  为 true 时，展开期间额外监听左栏 iframe 的 contentDocument mousedown 一并收起。
    *  仅「编辑项」用（它贴着预览区、用户顺手点简历想收面板）；其它面板不贴 iframe，不必开。 */
   closeOnIframeClick?: boolean
+  /** 命令式展开（2026-10-11）：值变非空时自动打开浮窗（投递提案「调整检索词」→ 打开检索
+   *  控制台并预填草稿）。用 **token** 而非布尔：同一个值只触发一次，重开传新值（如递增计数器）。 */
+  openSignal?: string | number
 }
 
 /**
@@ -62,7 +65,7 @@ interface ToolTabProps {
  * 否则若父组件传每次渲染新建的箭头函数（内联/依赖 useT 闭包），effect 会在
  * 每次重渲染重跑 onOpen，埋死循环（SuggestionBasket 事故同源）。
  */
-export function ToolTab({ icon: Icon, label, count, badge, children, onOpen, panelClassName, fixed = true, align = 'right', ghost = false, disabled = false, disabledReason, closeOnIframeClick = false }: ToolTabProps) {
+export function ToolTab({ icon: Icon, label, count, badge, children, onOpen, panelClassName, fixed = true, align = 'right', ghost = false, disabled = false, disabledReason, closeOnIframeClick = false, openSignal }: ToolTabProps) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ top: number; right?: number; left?: number } | null>(null)
@@ -74,6 +77,13 @@ export function ToolTab({ icon: Icon, label, count, badge, children, onOpen, pan
   useEffect(() => {
     onOpenRef.current = onOpen
   })
+
+  // 命令式展开：openSignal 是 token（值变即打开一次）。挂载首帧（undefined→有值）也打开。
+  const prevSignal = useRef(openSignal)
+  useEffect(() => {
+    if (openSignal != null && openSignal !== prevSignal.current) setOpen(true)
+    prevSignal.current = openSignal
+  }, [openSignal])
 
   // 展开时计算标签的视口坐标（fixed 定位锚点）；fixed=false 时走 CSS 类（absolute）
   const prevOpen = useRef(open)

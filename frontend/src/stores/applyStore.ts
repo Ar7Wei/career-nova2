@@ -1,8 +1,8 @@
 import { create } from 'zustand'
 import api from '@/lib/api'
 import { useSettingsStore } from '@/stores/settingsStore'
-import type { FollowupReason, FollowupStatus, Interview, InterviewOutcome, Job, JobBrief, JobCounts, JobSort } from '@/types/apply'
-import type { AnalysisReport, AnalysisScope } from '@/types/apply'
+import type { Direction, FollowupReason, FollowupStatus, Interview, InterviewOutcome, Job, JobBrief, JobCounts, JobSort } from '@/types/apply'
+import type { AnalysisReport, AnalysisScope, ProposalKind } from '@/types/apply'
 import { toReportBlocks } from '@/types/report_block'
 import type { ReportBlock } from '@/types/report_block'
 
@@ -79,6 +79,13 @@ interface ApplyState {
   gateReason: CrawlGateReason
   /** 投递页分析报告（按 tab 缓存；§11.7.5 算一次存一次，前端只读）。 */
   analysis: Partial<Record<'batch' | 'daily', AnalysisReport>>
+  /** 待应用的检索词诊断（投递提案·收紧检索词）：点「调整检索词」时置入，控制台顶部横幅显示，
+   *  并在控制台打开时触发一次 refine；commit 成功后清空。 */
+  pendingRefineHint: string | null
+  /** 命令式打开检索控制台的信号（token，每次点「调整检索词」递增——同一个 hint 也能重开）。 */
+  consoleOpenSignal: number
+  /** refine 出的方向提案（预填草稿用）：ConsoleTrigger 拉好后放这，DirectionPanel 读它回填。 */
+  refineProposed: Direction | null
 
   /** 事件驱动抓岗位（kickCrawl）：后端猎聘一轮 + 前程无忧读 DOM 一轮，尾部踢分析。 */
   kick: () => Promise<void>
@@ -99,8 +106,19 @@ interface ApplyState {
   setDateRange: (r: DateRange | null) => void
   /** 切换检索控制台浮窗某块的折叠态。 */
   toggleConsoleSection: (section: 'criteria' | 'crawl') => void
+  /** 投递提案·收紧检索词：放下诊断 + 递增开台信号（触发展开检索控制台）。 */
+  setRefineHint: (hint: string | null) => void
+  /** 存 refine 出的方向提案（供 DirectionPanel 预填草稿）。 */
+  setRefineProposed: (d: Direction | null) => void
+  /** 预填应用完 / 方向已拍板 → 清空诊断与提案（收起横幅、撤回预填源）。 */
+  clearRefineHint: () => void
   /** 追加一条投递跟进状态事件（推进/回退/终态）。 */
   pushFollowup: (jobId: number, status: FollowupStatus, extra?: { reason?: FollowupReason; stage?: string; note?: string }) => Promise<void>
+  /** 执行投递提案·剔除偏岗（人确认后）：调端点（服务端从缓存报告现读 id、逐条落 not_pursuing/withdrawn、
+   *  记提案 `drop=applied`）→ 本地翻转提案态 + 重拉当前 tab。返回实际剔除条数。 */
+  applyProposalDrop: (roundId: number) => Promise<number>
+  /** 忽略某类提案（drop / refine）：调端点记 `dismissed` → 本地翻转提案态。 */
+  dismissProposal: (roundId: number, kind: ProposalKind) => Promise<void>
   /** 排一场面试（唯一进入「待面试」的入口）。 */
   scheduleInterview: (jobId: number, input: { scheduledAt: string; location: string; round: string }) => Promise<void>
   /** 更新一场面试（改期 / 改结果 / 安排下一场）。 */
@@ -220,6 +238,7 @@ function toFrontendReport(r: Record<string, unknown>): AnalysisReport {
   if (blocks.length === 0 && typeof r.body === 'string' && r.body.trim() !== '') {
     blocks = [{ kind: 'text', md: r.body }]
   }
+  const rawDrops = Array.isArray(r.drop_jobs) ? (r.drop_jobs as Record<string, unknown>[]) : []
   return {
     scope: r.scope as AnalysisScope,
     scopeKey: String(r.scope_key ?? ''),
@@ -233,6 +252,15 @@ function toFrontendReport(r: Record<string, unknown>): AnalysisReport {
       withJd: meta.with_jd == null ? undefined : Number(meta.with_jd),
     },
     createdAt: String(r.created_at ?? ''),
+    dropJobs: rawDrops.map((d) => ({
+      id: Number(d.id),
+      title: String(d.title ?? ''),
+      company: String(d.company ?? ''),
+    })),
+    refineHint: String(r.refine_hint ?? ''),
+    proposalState: ((r.proposal_state ?? {}) as Record<string, unknown>) && typeof r.proposal_state === 'object'
+      ? (r.proposal_state as AnalysisReport['proposalState'])
+      : {},
   }
 }
 
@@ -289,6 +317,9 @@ export const useApplyStore = create<ApplyState>((set, get) => ({
   kickRunning: false,
   gateReason: 'crawled',
   analysis: {},
+  pendingRefineHint: null,
+  consoleOpenSignal: 0,
+  refineProposed: null,
 
   /** 事件驱动抓岗位：后端猎聘一轮 + 前程无忧读 DOM 一轮，完成后重拉列表。 */
   kick: async () => {
@@ -395,6 +426,10 @@ export const useApplyStore = create<ApplyState>((set, get) => ({
   toggleConsoleSection: (section) => {
     set({ consoleSections: { ...get().consoleSections, [section]: !get().consoleSections[section] } })
   },
+  setRefineHint: (hint) =>
+    set((s) => ({ pendingRefineHint: hint, consoleOpenSignal: s.consoleOpenSignal + 1, refineProposed: null })),
+  setRefineProposed: (d) => set({ refineProposed: d }),
+  clearRefineHint: () => set({ pendingRefineHint: null, refineProposed: null }),
 
   pushFollowup: async (jobId, status, extra) => {
     try {
@@ -408,6 +443,25 @@ export const useApplyStore = create<ApplyState>((set, get) => ({
       await get().refreshList(get().tab)
     } catch {
       // 落库失败：出声（不静默——否则用户以为存了实际没存）
+    }
+  },
+
+  applyProposalDrop: async (roundId) => {
+    const { data } = await api.post<{ count: number }>('/v1/analysis/proposal/apply', { round_id: roundId, kind: 'drop' })
+    // 本地即刻翻转提案态（报告是缓存的、内容不变；处置另存一张表 → 不重算报告）。
+    const batch = get().analysis.batch
+    if (batch) {
+      set({ analysis: { ...get().analysis, batch: { ...batch, proposalState: { ...batch.proposalState, drop: 'applied' } } } })
+    }
+    await get().refreshList(get().tab)  // 剔掉的岗移出未处理列表 + 徽标刷新
+    return data.count ?? 0
+  },
+
+  dismissProposal: async (roundId, kind) => {
+    await api.post('/v1/analysis/proposal/dismiss', { round_id: roundId, kind })
+    const batch = get().analysis.batch
+    if (batch) {
+      set({ analysis: { ...get().analysis, batch: { ...batch, proposalState: { ...batch.proposalState, [kind]: 'dismissed' } } } })
     }
   },
 

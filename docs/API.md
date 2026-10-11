@@ -137,7 +137,7 @@
 
 #### 子项状态迁移 → `POST /api/v1/optimization/record/status`
 优化点面板的**子项定论**端点：把某改动记录的某子项迁到 `confirmed` / `rejected` / `discussing` / `pending`。
-`origin=job_analysis` 的一类（历史上由投递页处方产出）**2026-10-11 起已无新产出**（投递分析不再产处方，ADR 0023）——
+`origin=job_analysis` 的一类（历史上由投递页处方产出）**2026-10-11 起已无新产出**（投递分析不再产处方）——
 但该 `origin` 值、面板读口那道「帘子」（未定论子项不进四栏）与既有数据**保留**：老库里的历史处方仍走此端点定论。
 **没有单独的 promote 端点**（2026-10-11 删；旧表 `optimization_pending` 随之无任何读写口，待 DROP）。
 - 「帘子」：未定论的 `origin=job_analysis` 子项**不进优化点面板四栏**；`confirmed` 后才出现在「已确认」栏，可「开始改」。
@@ -388,7 +388,7 @@
 #### `GET /api/v1/jobs`
 读岗位列表（跨平台统一列表）。
 - query 参数（可选）：`sort`（`time`/`followup`/`match`）、`order`（`asc`/`desc`）、`status`（状态 tab，见下）、`reason`（仅 `status=not_pursuing` 叠加）、`start`/`end`（日期范围，闭区间，ISO 字符串，按「处理日期」过滤——未处理按 `last_seen_at`、其余按 `followup_at`）。**`source` 平台筛选已删（2026-09-01）**——前端不再提供平台下拉，列表恒全平台；**`sort=freshness/relevance` 与 `query`（检索关键词）已删（2026-09-08）**——排序只剩「时间」两维。
-  - **`sort=match`（2026-10-11，ADR 0023「匹配度排序」）**：按**契合度**确定性打分降序——门槛（用户年限/学历 vs 岗位 `experience`/`degree`）+ 契合（标题命中目标岗位/方向检索词）。后端现算用户画像（当前简历成品 `resume_json`）+ 契合词表（方向 role/keywords）。**是契合度不是成功率**：只回答「最契合 / 最省事」，没有结果数据、不做「容易中」的预测。命中时每个 job 带回 `match_score`（0~100）与 `match_reason`（门槛结论 + 命中词），供行内展示。
+  - **`sort=match`（2026-10-11，「匹配度排序」）**：按**契合度**确定性打分降序——门槛（用户年限/学历 vs 岗位 `experience`/`degree`）+ 契合（标题命中目标岗位/方向检索词）。后端现算用户画像（当前简历成品 `resume_json`）+ 契合词表（方向 role/keywords）。**是契合度不是成功率**：只回答「最契合 / 最省事」，没有结果数据、不做「容易中」的预测。命中时每个 job 带回 `match_score`（0~100）与 `match_reason`（门槛结论 + 命中词），供行内展示。
 - 响应 `200` `JobsListResponse`（2026-08-31 加 `counts`）：
   ```json
   {
@@ -502,10 +502,15 @@
 > **算一次存一次**（落 `analysis_reports`），本组端点有则读、无则后台补算返回 `computing`。
 > 设计与理由 → `docs/design/apply.md` §11.7。
 >
-> **2026-10-11 换根（ADR 0023）**：投递分析**只做供给分析，不做简历分析**——答「这批岗是不是你要的」，
+> **2026-10-11 换根**：投递分析**只做供给分析，不做简历分析**——答「这批岗是不是你要的」，
 > **不再答「你缺什么技能」**（技能缺口要逐岗 JD，而投递前拿不到；猎聘搜索 API 连技能标签都不返回）。
 > 故批次分析**不再产出「处方」**——`suggestions` 字段已**从响应中移除**（改进建议仍由聊天 agent 的
 > `suggest_improvements` 出、走优化点面板，与本组端点无关）。
+> 取而代之「**投递提案**」——报告之外另带两个**可执行载体**：`drop_jobs`（建议剔除的偏岗）
+> ＋ `refine_hint`（检索词诊断）。**分析产提案、人点确认才执行**（与 `dismiss` / `dispose-unprocessed`
+> 同构）：剔除偏岗走 `POST /analysis/proposal/apply`；收紧检索词走 `POST /direction/refine`。
+> **提案有生命周期（2026-10-11 补）**：执行/忽略后落 `analysis_proposal_state` 表（`POST /analysis/proposal/apply`
+> / `POST /analysis/proposal/dismiss`），读口带 `proposal_state`——报告是缓存的、内容不变，处置单存一张表。
 
 #### `GET /api/v1/analysis/unprocessed?round_id=`
 未处理 tab 的批次分析（本轮那批岗位）。**一轮爬完触发**——前端在 `kickCrawl` 尾部调（**不传 `round_id`**）。
@@ -516,33 +521,64 @@
     "scope": "batch", "scope_key": "7", "status": "ready",
     "headline": "这批 AI 应用岗是你要的，门槛也够得着——但『AI』那组词捞进了一半传统信息化岗",
     "blocks": [
-      { "kind": "text", "md": "**判词**：这批岗整体对你要得起。7 年经验对 3-5 年门槛的岗有富余……" },
+      { "kind": "section", "title": "门槛" },
+      { "kind": "text", "md": "明确卡门槛的岗有 3 个，你能直接投的有 8 个……" },
+      { "kind": "section", "title": "你的牌 / 风险" },
       { "kind": "chart", "spec": { "type": "bar", "title": "城市分布",
         "data": [{"label": "成都-高新区", "count": 27}], "x": "label",
         "series": [{"key": "count"}], "orientation": "vertical", "note": "仅猎聘样本" } },
-      { "kind": "text", "md": "**提案**：『AI』那组词捞进一堆传统信息化岗，改成『大模型应用』……" }
+      { "kind": "section", "title": "提案" },
+      { "kind": "text", "md": "建议剔除 3 个销售岗；『AI』那组词改成『大模型应用』……" }
     ],
     "meta": { "total": 12, "liepin": 8, "job51": 4, "with_jd": 4 },
+    "drop_jobs": [
+      { "id": 42, "title": "销售经理", "company": "某公司", "reason": "跟 AI 方向不符" }
+    ],
+    "refine_hint": "「AI」那组捞进了一堆传统信息化岗，建议改成「大模型应用」",
+    "proposal_state": { "drop": "applied" },
     "created_at": "2026-09-14T02:11:03+00:00"
   }
   ```
   - `status`：`ready`（有缓存）/ `computing`（正在算，**前端轮询**）/ `missing`（本轮无岗位，没东西可算）。
-  - `blocks`（2026-09-15 文/图穿插）：报告正文的**有序块流**——`{"kind":"text","md":…}`（Markdown 段）/
+  - `blocks`（2026-09-15 文/图穿插；2026-10-11 加 `section`）：报告正文的**有序块流**——`{"kind":"section","title":…}`
+    （小节标题，把报告脊柱「门槛 / 你的牌·风险 / 提案」分层）｜`{"kind":"text","md":…}`（Markdown 段）/
     `{"kind":"chart","spec":…}`（内嵌 `ChartSpec`）。analyze Agent 按叙述顺序产出，**图插在讲它的那段文字
     之后**（讲一段→配一张→再讲一段）。图表 0~4 张、宁缺勿滥；无图 = 全 text 块。`ChartSpec` 契约见
     `app/schemas/chart.py`——6 种图型 `bar/line/area/donut/pie/radar`、series ≤ 2、`x`/`series.key` 须在
     data 行内；数据来自 `compute_stats` 的 StatsPack。前端 `toReportBlocks` + `isChartSpec` 校验兜底，
-    坏块（kind 不认得 / chart 配错）单独丢、text 照显。**兼容旧缓存**：无 `blocks` 只有 `body` 时折成单个 text 块。
+    坏块（kind 不认得 / chart 配错 / section 空标题）单独丢、text 照显。**兼容旧缓存**：无 `blocks`
+    只有 `body` 时折成单个 text 块；无 `section` 块 = 无分节（照渲染，不崩）。
   - `meta`：统计口径——`total` 本批岗位数 / `liepin`·`job51` 来源分布 / `with_jd` 有 JD 数
     （前端据此标注"深度分析（有 JD）vs 概览（无 JD）"，不让用户以为覆盖不全都一样深）。
+  - **`drop_jobs`（投递提案·剔除偏岗，2026-10-11）**：分析挑出的偏岗清单（`{id,title,company}`，剔除理由在报告正文里说）。
+    Agent 出 id、service 用本轮岗位补 `title`/`company`（不让模型编）并**校验 id ⊆ 本轮**（越界丢）；
+    空数组 = 没可剔的。前端渲染清单 → 人确认 → `POST /analysis/proposal/apply`（id 由服务端从缓存报告现读，逐条落 `not_pursuing`/`withdrawn`）。
+  - **`refine_hint`（投递提案·收紧检索词，2026-10-11）**：检索词诊断文本（哪组捞歪了、该往哪收）；
+    空串 = 检索词无需动。前端据此调 `POST /direction/refine {hint}` 出提案、预填方向面板、人工拍板。
+  - **`proposal_state`（投递提案的处置，2026-10-11）**：`{drop: applied|dismissed, refine: …}`，
+    来自 `analysis_proposal_state` 表；**缺省的 kind = pending**（未处置）。报告是缓存、内容不变，
+    处置单存一张表——前端据此把「剔除 / 忽略」按钮换成「已剔除 / 已忽略」标记。空对象 = 全 pending。
   - **报告脊柱（2026-10-11）**：判词（这批岗要不要得起 / 词捞歪没）→ 门槛（**你的门槛过几成**，
     确定性对表 `StatsPack.gate`：经验/学历达标·差一点·明显不够 + 双门槛都达标数）→ 你的牌/风险（薪资/城市/学历）
-    → 提案（可执行的一两件事：剔除偏岗 / 收紧检索词 / 调期望）。**无提案也合法**（这批没问题就说"直接投"）。
+    → 提案（正文一句带过，**具体动作落在 `drop_jobs`/`refine_hint`**）。**无提案也合法**（`drop_jobs=[]`、`refine_hint=""`）。
+    **「调整期望」（换目标岗位/城市）不进提案**——那是简历页聊天的决策，本面板没有载体、不预设。
   - **门槛对表**：用户年限/学历从**当前简历成品**（`resume_json`）现算（最早工作 → 今天 + 最高学历），
     与岗位 `experience`/`degree` 做三档对表；门槛「不限/未注明/解析不出」的岗**不计入分母**。
   - **2026-09-15 graph 化**：batch 走 `graphs/analysis.py`（load → prepare → compute_stats → analyze →
     persist），analyze 用带工具位的 Agent（详见 apply.md §11.7.6）。两种数据源两种分析法不变：猎聘
     （无 JD、扫描列表字段）代码聚合；前程无忧（有 JD）逐岗读 JD 提炼（留在 service prepare 阶段）。
+
+#### `POST /api/v1/analysis/proposal/apply`
+执行「剔除偏岗」提案（2026-10-11）。
+- 请求体 `{ "round_id": 7, "kind": "drop" }`（**不递 job id 清单**——服务端从缓存报告现读现校，免前端清单与缓存脱节）。
+- 响应 `200` `{ "status": "applied", "count": 3 }`。
+- 行为：取该轮报告 `drop_jobs` → 逐条落 `job_followup_events`（`not_pursuing`/`withdrawn`，岗位离「未处理」）
+  → 记 `analysis_proposal_state` `drop=applied`。已删除的岗跳过、越界/重复幂等不报错。
+
+#### `POST /api/v1/analysis/proposal/dismiss`
+忽略某类提案（2026-10-11）。
+- 请求体 `{ "round_id": 7, "kind": "drop" }`（`kind` ∈ `drop` / `refine`）。
+- 响应 `200` `{ "status": "dismissed", "count": 0 }`。行为：记提案态 `dismissed`，**报告本身不动**、幂等。
 
 #### `GET /api/v1/analysis/applied`
 已投递 tab 的投递日报。**进页面触发**（后端按本地日 "截至昨天" 的缓存键）。
@@ -562,6 +598,7 @@
 > 2026-08-19 grill 定稿。方向 = **派生事实**（存 `user_facts`，不建独立表）——「求职目标」= `category=basic`、`title="目标岗位：{role}"` 的单值槽位（`save_target_role` 已实现），「搜索词」挂同一条 fact 的 `points`，「城市」= 同构单值槽位 `title="目标城市：{city}"`。设计与理由 → `docs/design/apply.md` §11.2。
 > **2026-08-19 收尾（role 派生 + 面板可编辑）**：推翻「面板只读三道闸」——方向面板**可编辑**（搜索词增删 + 城市单值可空），role = `keywords[0]` 纯派生（不单独存/不单独编辑/不入参）。
 > **2026-08-20 定稿（方向靠聊天自动生成，删投递页 refine 按钮）**：方向由**聊天 agent** 在简历页聊出目标后经 `refine_direction`/`commit_direction` 工具生成（走 service 真源，不经 HTTP）。投递页面板**只读当前方向 + 手填编辑 + 保存**（commit）。**删去 `POST /direction/refine` 端点**——refine 只是 service 函数（聊天 agent 工具直调），不再暴露 HTTP。
+> **2026-10-11 重开 `POST /direction/refine`**：供**投递提案·收紧检索词**用——投递分析给的诊断（`hint`）经此端点重新提炼方向出提案，前端预填方向面板、**人工拍板仍走 `commit`**。只读不落库，与聊天 agent 工具是同一个 service 函数。
 > **2026-08-21 定稿（查询组二维化 + role 独立）**：搜索词从一维升级为二维查询组 `list[list[str]]`——**组内多词、组间 OR**。**role 恢复为独立字段**（岗位标签，写简历/方向展示用，**不参与搜索**），与 keywords 互不派生、内容可重复。落盘：`title` 存 role、`points` 每个元素 = 组内空格 join（`"全栈 英语"`），`get_direction` 读回时 `split()` 拆回二维。
 > **2026-09-11 实测修正**：原「组内 AND」是**不完整**的描述——平台对多词是**自适应 AND**（有交集按 AND、交集不足**静默放宽成 OR**，放宽留哪个词与词序无关）。**写法**（一组 = 概念 + 大范围共现的收窄词、同义变体只留最强的一个、2~3 组起步）见 `app/skills/direction/SKILL.md`。
 
@@ -585,6 +622,14 @@
 #### `GET /api/v1/direction/cities`
 可选城市库（2026-09-01 新增）：前端城市下拉数据源。
 - 响应 `200` `CitiesResponse`：`{ "cities": ["北京", "上海", ...25 城...] }`（有序）。
+
+#### `POST /api/v1/direction/refine`
+从 facts 提炼方向**提案**（**只读不落库**，2026-10-11 重开）。供**投递提案·收紧检索词**用。
+- 请求体 `DirectionRefineRequest`：`{ "hint": "「AI」那组捞进了一堆传统信息化岗，建议改成「大模型应用」" }`
+  ——`hint` = 外部诊断（投递分析给的「哪组词捞歪了」），refine 时**额外参考**它重新提炼；空串 = 无提示（等价普通 refine）。
+- 响应 `200` `DirectionRefineResponse`：`{ "current": {…} | null, "proposed": {…} | null }`
+  ——`current` = 当前已存方向（无则 null）；`proposed` = LLM 提炼出的方向（**无 facts 可提炼则 null**，短路在调 LLM 之前）。
+- **不落库**：与本端点同名的 service 函数（聊天 agent 的 `refine_direction` 工具直调）同一真源，拍板走 `POST /direction/commit`。前端流程：分析面板点「调整检索词」→ 本端点出 `proposed` → 打开检索控制台、草稿预填 → 用户编辑 → `commit`。
 
 #### `POST /api/v1/direction/commit`
 改方向（人拍板）：写回 facts，返回待处置的未处理岗位数。

@@ -179,15 +179,18 @@ def load_rewrite_content_prompt(
     )
 
 
-def load_refine_direction_prompt(facts: str, current_direction: str = "") -> str:
+def load_refine_direction_prompt(facts: str, current_direction: str = "", hint: str = "") -> str:
     """加载方向提炼 prompt（投递·方向，apply.md §11.2）。
 
     facts：注入的 active facts 文本（含目标岗位/工作/技能）。
     current_direction：当前方向的人话描述（空 = 首次定方向）。
+    hint（2026-10-11，ADR 0023）：外部诊断（如投递分析给的「哪组检索词捞歪了」）——提炼时额外
+      参考，用于投递页「收紧检索词」。空 = 无提示。
     """
     return _REFINE_DIRECTION_TEMPLATE.format(
         facts=facts or "（暂无已收录事实）",
         current_direction=current_direction or "（空，首次定方向）",
+        hint=hint.strip() or "（无外部诊断）",
         language_instruction=_language_instruction(),
     )
 
@@ -225,17 +228,26 @@ def preview_pending_hint() -> str:
 # ---------------------------------------------------------------------------
 
 
-def load_analysis_batch_prompt(*, facts: str, round_summary: str, tone_note: str = "", stats_summary: str = "") -> str:
-    """加载「未处理」批次分析 prompt（本轮那批岗位 → 总览报告 + 处方 + 可选配图）。
+def load_analysis_batch_prompt(
+    *,
+    facts: str,
+    round_summary: str,
+    tone_note: str = "",
+    stats_summary: str = "",
+    jobs_index: str = "",
+) -> str:
+    """加载「未处理」批次分析 prompt（本轮那批岗位 → 总览报告 + 投递提案 + 可选配图）。
 
     round_summary：本批岗位的结构化摘要（job51 有 JD 的走提炼、猎聘无 JD 的走标签聚合）。
     stats_summary：compute_stats 算出的确定性统计文本——analyze Agent 配图只能从这里面取数。
+    jobs_index：「id | 标题」索引（Agent 填 proposal.drop_job_ids 用，只许填这里列出的 id）。
     """
     return _ANALYSIS_BATCH_TEMPLATE.format(
         facts=facts or "（暂无已收录事实）",
         round_summary=round_summary,
         tone_note=tone_note,
         stats_summary=stats_summary or "（暂无统计）",
+        jobs_index=jobs_index or "（本批无岗位 id 索引）",
         current_date=_current_date_line(),
         language_instruction=_language_instruction(),
     )

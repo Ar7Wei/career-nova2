@@ -206,11 +206,13 @@ def _describe_direction(d: Direction) -> str:
 
 
 
-async def refine_direction() -> DirectionRefineResponse:
+async def refine_direction(hint: str = "") -> DirectionRefineResponse:
     """从 active facts 提炼方向（LLM 结构化输出），返回 current/proposed（只读不落库）。
 
     - current：当前已存方向（无则 None）。
     - proposed：LLM 提炼出的方向；无 facts 可提炼则 None（提示先去聊目标）。
+    - hint（2026-10-11，ADR 0023）：外部诊断（如投递分析给的「哪组检索词捞歪了」），refine 时
+      **额外参考**它重新提炼——投递页「收紧检索词」复用本执行器的入口。空 = 无提示（普通 refine）。
     一次性 + 事后编辑：LLM 只翻译，不对话，不写库——拍板走 commit。
     2026-08-25：删 is_new_direction / unprocessed_count（岗位处置统一由 commit 后的
     pending_disposal_count 表达，refine 不再判定连续性）。
@@ -227,12 +229,13 @@ async def refine_direction() -> DirectionRefineResponse:
     prompt = load_refine_direction_prompt(
         facts=await _build_facts_text(),
         current_direction=_describe_direction(current),
+        hint=hint,
     )
     result = await llm_service.call(
         [HumanMessage(content=prompt)],
         response_format=DirectionRefineOutput,
     )
-    logger.info("direction_refined", role=result.role, keywords=result.keywords)
+    logger.info("direction_refined", role=result.role, keywords=result.keywords, has_hint=bool(hint.strip()))
     # 清洗：去空词/空组；cities 对齐到**清洗后仍非空**的组（LLM 给的组数与城市数可能不一致，
     # 缺项补空串 = 「这组还没定城市」，不编造、不报错——commit 时才逐组必填）。
     kw: list[list[str]] = []

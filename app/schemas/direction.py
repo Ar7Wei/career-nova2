@@ -97,6 +97,17 @@ class CitiesResponse(BaseModel):
     cities: list[str] = Field(default_factory=list)
 
 
+class DirectionRefineRequest(BaseModel):
+    """带外部提示的方向提炼请求（2026-10-11，ADR 0023）。
+
+    投递分析诊断出「哪组检索词捞歪了」，作为 `hint` 喂给 refine——refine 在 facts 之外**额外
+    参考**它重新提炼方向。**只产提案不落库**（照 refine 铁律：拍板走 commit）。空串 = 无提示
+    （等价于普通 refine）。
+    """
+
+    hint: str = ""
+
+
 # ---- LLM 结构化输出（refine 内部用，非 API 响应）----
 
 

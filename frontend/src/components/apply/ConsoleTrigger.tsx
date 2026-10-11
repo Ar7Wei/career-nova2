@@ -1,9 +1,11 @@
 import { Crosshair, Loader2 } from 'lucide-react'
 import { Tooltip } from '@mantine/core'
+import { notifications } from '@mantine/notifications'
 import { useDirectionStore } from '@/stores/directionStore'
 import { useApplyStore, type CrawlGateReason } from '@/stores/applyStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import { useT } from '@/lib/i18n'
+import { userErrorText } from '@/lib/errors'
 import { ToolTab } from '@/components/ToolTab'
 import { DirectionPanel } from './DirectionPanel'
 
@@ -27,6 +29,9 @@ export function ConsoleTrigger() {
   const applyMode = useSettingsStore((s) => s.apply_mode)
   const kickRunning = useApplyStore((s) => s.kickRunning)
   const gateReason = useApplyStore((s) => s.gateReason)
+  // 投递提案·收紧检索词：诊断 + 开台信号（点「调整检索词」时置入 → 这里展开 + 顶部横幅提示）。
+  const refineHint = useApplyStore((s) => s.pendingRefineHint)
+  const openSignal = useApplyStore((s) => s.consoleOpenSignal)
 
   const state = indicatorState(kickRunning, gateReason)
 
@@ -55,12 +60,25 @@ export function ConsoleTrigger() {
       <ToolTab
         align="left"
         panelClassName="console-panel"
+        openSignal={openSignal}
         onOpen={() => {
           // 打开即预取城市库 + 当前方向：下拉数据来自后端 /direction/cities，只在
           // DirectionPanel 挂载时拉既不及时也拿不到——故收敛到 onOpen（面板打开的显式信号）。
           // 打开瞬间置 citiesLoading，配合 QueryGroupsEditor 的挂载兜底拉，加载中下拉置灰，
           // 数据到位后再放开（避免首帧空下拉被误读成「没有 25 城可选」）。
           void useDirectionStore.getState().loadCities()
+          // 投递提案·收紧检索词：带着分析诊断打开时，跑一次 refine 出提案预填草稿（只读不落库）。
+          // 已 refine 过（refineProposed 在）就不重跑——重开控制台不该再烧一次 LLM。
+          const st = useApplyStore.getState()
+          if (st.pendingRefineHint && !st.refineProposed) {
+            void useDirectionStore
+              .getState()
+              .refineWithHint(st.pendingRefineHint)
+              .then((proposed) => useApplyStore.getState().setRefineProposed(proposed))
+              .catch((err) => {
+                notifications.show({ color: 'red', title: t('apply.analysisTitle'), message: userErrorText(err) })
+              })
+          }
         }}
         label={
           <span className="console-trigger-label">
@@ -72,6 +90,13 @@ export function ConsoleTrigger() {
           </span>
         }
       >
+        {/* 投递提案·收紧检索词：顶部横幅显示分析诊断，提示下面草稿是据它预填的，请复核。 */}
+        {refineHint && (
+          <div className="console-refine-banner">
+            <span className="console-refine-banner-label">{t('apply.refineBannerLabel')}</span>
+            <span>{refineHint}</span>
+          </div>
+        )}
         <DirectionPanel />
       </ToolTab>
     </Tooltip>

@@ -13,6 +13,7 @@ from langgraph.graph.state import Command
 
 from app.agents.analysis import run_batch_analysis_agent, run_daily_analysis_agent
 from app.core.logging import logger
+from app.schemas.analysis import DropJob
 from app.schemas.analysis_graph import AnalysisState
 from app.schemas.jobs import Job
 from app.services.analysis_daily_stats import compute_daily_stats, render_daily_stats_summary
@@ -70,7 +71,7 @@ async def compute_stats_node(state: AnalysisState) -> Command:
 
 
 async def analyze_node(state: AnalysisState) -> Command:
-    """Analyze Agent（按 scope 分流）：batch → 报告+处方；daily → 日报（无处方）。空输入短路。"""
+    """Analyze Agent（按 scope 分流）：batch → 报告 + 投递提案；daily → 日报。空输入短路。"""
     if state.scope == "daily":
         if state.daily_stats is None or state.daily_stats.total_events == 0:
             return Command(update={})
@@ -85,11 +86,14 @@ async def analyze_node(state: AnalysisState) -> Command:
 
     if not state.jobs or state.stats is None:
         return Command(update={})
+    # 岗位 id 索引（Agent 填 proposal.drop_job_ids 用，只许填这里列出的 id）。确定性代码生成。
+    jobs_index = "\n".join(f"{j.id} | {j.title} @ {j.company}" for j in state.jobs)
     batch_result = await run_batch_analysis_agent(
         facts=state.facts,
         round_summary=state.round_summary,
         tone_note=state.tone_note,
         stats_summary=render_stats_summary(state.stats),
+        jobs_index=jobs_index,
     )
     meta: dict[str, Any] = {
         "total": state.stats.total,
@@ -97,13 +101,22 @@ async def analyze_node(state: AnalysisState) -> Command:
         "job51": state.stats.job51,
         "with_jd": state.stats.with_jd,
     }
+    # 投递提案（ADR 0023）：id 校验（⊆ 本轮真实岗位，越界丢）+ 用 DB 补标题/公司（不让模型编）。
+    by_id = {j.id: j for j in state.jobs}
+    drop_jobs = [
+        DropJob(id=jid, title=by_id[jid].title, company=by_id[jid].company)
+        for jid in dict.fromkeys(batch_result.proposal.drop_job_ids)  # 去重、保序
+        if jid in by_id
+    ]
     batch_charts = sum(1 for b in batch_result.blocks if b.kind == "chart")
-    logger.info("analysis_analyzed", scope="batch", charts=batch_charts)
+    logger.info("analysis_analyzed", scope="batch", charts=batch_charts, drops=len(drop_jobs))
     return Command(
         update={
             "headline": batch_result.headline,
             "blocks": batch_result.blocks,
             "meta": meta,
+            "drop_jobs": drop_jobs,
+            "refine_hint": batch_result.proposal.refine_hint.strip(),
         }
     )
 

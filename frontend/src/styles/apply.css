@@ -119,16 +119,6 @@
   color: var(--color-muted);
 }
 
-/* 匹配度排序开关（ADR 0023，仅未处理 tab）：按下 = 主色淡底 + 主色字，表明当前排序维度。 */
-.apply-match-toggle {
-  flex: none;
-  color: var(--color-muted);
-}
-.apply-match-toggle.is-on {
-  color: var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 12%, transparent);
-}
-
 /* 刷新结果反馈 */
 .apply-refresh-result {
   flex: none;
@@ -1291,6 +1281,41 @@
   padding: var(--space-3) 0;
 }
 
+/* 卡片头（2026-10-11）：本批规模 + 分析日期 + 覆盖——把报告和"工具提示"区分开，
+   给下面的判词/正文/行动区一个"这是一份报告"的顶。 */
+.analysis-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+.analysis-card-head-main {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-ink);
+}
+.analysis-card-head-date {
+  color: var(--color-muted);
+}
+.analysis-card-head-coverage {
+  flex-basis: 100%;
+  color: var(--color-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* 小节标题（section 块，2026-10-11）：把报告脊柱（门槛/风险/提案）在 UI 上分层——
+   比正文重一档、带左侧主色短竖条，和 headline（更重的判词）拉开层级。 */
+.analysis-section-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-ink);
+  line-height: var(--line-height-normal);
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--primary-color);
+  margin-top: var(--space-2);
+}
+
 /* 报告：一句话结论（判词）+ 正文。
    headline 是「这批岗你要不要得起」的判词——比正文重一档、左侧主色描边点题。 */
 .analysis-headline {
@@ -1309,9 +1334,108 @@
   line-height: var(--line-height-relaxed);
   word-break: break-word;
 }
-.analysis-meta {
+
+/* 投递提案（ADR 0023）：报告之下的可执行载体。与报告正文用一道细线分隔，区别于「叙事」。 */
+.analysis-proposal {
+  border-top: 1px solid var(--color-border-light);
+  padding-top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+/* 行动区头：左侧标题 + 右侧「按匹配度排序」钮（或已排标记）。 */
+.analysis-proposal-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-muted);
+  letter-spacing: 0.03em;
+}
+.analysis-proposal-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  background: var(--color-soft);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+/* 条目头：左侧说明（可展开的剔除计数 / 检索词诊断文本）+ 右侧动作钮。 */
+.analysis-proposal-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.analysis-drop-toggle.analysis-drop-toggle {
+  padding: 0;
+  height: auto;
+  min-height: 0;
+  font-size: var(--font-size-lg);
+  color: var(--color-ink);
+}
+.analysis-proposal-text {
+  font-size: var(--font-size-lg);
+  color: var(--color-ink);
+  line-height: var(--line-height-normal);
+  min-width: 0;
+}
+/* 动作区一行右侧：动作钮组（剔除+忽略 / 调整+忽略）或已执行/已忽略标记。 */
+.analysis-proposal-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+.analysis-proposal-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
   font-size: var(--font-size-sm);
   color: var(--color-muted);
+}
+.analysis-proposal-done.is-applied {
+  color: var(--primary-color);
+}
+.analysis-drop-list {
+  margin: 0;
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.analysis-drop-list li {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+.analysis-drop-title {
+  color: var(--color-ink);
+}
+.analysis-drop-company {
+  color: var(--color-muted);
+}
+
+/* 收紧检索词横幅（检索控制台顶部）：显示分析诊断，提示下面草稿据它预填、请复核。 */
+.console-refine-banner {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  margin: var(--space-3) var(--space-3) 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-warning-soft);
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+  line-height: var(--line-height-normal);
+}
+.console-refine-banner-label {
+  font-weight: var(--font-weight-semibold);
+  flex-shrink: 0;
 }
 /* 分析报告配图（ChartRenderer，2026-09-15 自由配图）：块流内文/图穿插，图块上下留白。 */
 .chart-block {

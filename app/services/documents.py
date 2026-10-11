@@ -25,7 +25,7 @@ from app.repositories import sessions as sessions_repo
 from app.repositories import snapshots as snaps_repo
 from app.repositories.facts import create_facts, delete_all_facts, list_facts, update_fact
 from app.repositories.crawl_state import clear_all_crawl_state
-from app.repositories.analysis import clear_all_reports
+from app.repositories.analysis import clear_all_proposal_states, clear_all_reports
 from app.repositories.jobs import clear_all_followup_events, clear_all_interviews, clear_all_jobs, epoch_write_guard
 from app.repositories.optimization import clear_all_change_records, clear_all_preferences
 from app.repositories.settings import bump_data_epoch, bump_resume_epoch
@@ -288,6 +288,7 @@ async def reset_all() -> dict[str, int]:
         followup_events = await clear_all_followup_events()
         interviews = await clear_all_interviews()
         analysis_reports = await clear_all_reports()
+        proposal_states = await clear_all_proposal_states()
         jobs = await clear_all_jobs()
         crawl_state = await clear_all_crawl_state()
         sessions = await sessions_repo.delete_all_sessions()
@@ -307,6 +308,7 @@ async def reset_all() -> dict[str, int]:
             followup_events=followup_events,
             interviews=interviews,
             analysis_reports=analysis_reports,
+            proposal_states=proposal_states,
             jobs=jobs,
             crawl_state=crawl_state,
             sessions=sessions,
@@ -325,7 +327,6 @@ async def reset_all() -> dict[str, int]:
             "crawl_state": crawl_state,
             "sessions": sessions,
         }
-
 
 async def create_version_snapshot(document_id: int) -> None:
     """给某版打一份工作台快照（该版**开始时**的工作台：资料集 + 改动记录）。

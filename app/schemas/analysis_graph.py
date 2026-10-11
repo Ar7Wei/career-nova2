@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.analysis import DropJob
 from app.schemas.jobs import Job, JobFollowupEvent
 from app.schemas.market import DistributionSlice
 from app.schemas.report_block import ReportBlock
@@ -127,3 +128,6 @@ class AnalysisState(BaseModel):
     headline: str = ""
     blocks: list[ReportBlock] = Field(default_factory=list)  # 报告正文块流（文/图穿插，analyze 自由配）
     meta: dict[str, Any] = Field(default_factory=dict)  # 统计口径（前端标注深度/概览）
+    # 投递提案（ADR 0023）：analyze 产出后由 service 补全/校验，persist 落进报告。
+    drop_jobs: list[DropJob] = Field(default_factory=list)  # 建议剔除的偏岗（id 校验 ⊆ 本轮）
+    refine_hint: str = ""  # 检索词诊断（「哪组词捞歪了」），喂 refine 出提案、人拍板

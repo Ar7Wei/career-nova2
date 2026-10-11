@@ -20,6 +20,8 @@ from app.schemas.direction import (
     DirectionCommitRequest,
     DirectionCommitResponse,
     DirectionDisposeResponse,
+    DirectionRefineRequest,
+    DirectionRefineResponse,
 )
 from app.services import direction as service
 
@@ -36,6 +38,17 @@ async def get_direction() -> Direction:
 async def list_cities() -> CitiesResponse:
     """可选城市库（有序 25 城，前端城市下拉数据源）。"""
     return CitiesResponse(cities=service.get_supported_cities())
+
+
+@router.post("/direction/refine", response_model=DirectionRefineResponse)
+async def refine_direction(req: DirectionRefineRequest) -> DirectionRefineResponse:
+    """从 facts 提炼方向提案（**只读不落库**）。投递页「收紧检索词」复用本入口。
+
+    2026-08-20 曾删此端点（方向由聊天 agent 生成、面板只读）；2026-10-11（ADR 0023）
+    为「投递提案·收紧检索词」重开：分析给的 `hint`（哪组词捞歪了）喂进来重新提炼 → 前端
+    预填方向面板 → 人工拍板走既有 commit。拍板前不写任何库。
+    """
+    return await service.refine_direction(hint=req.hint)
 
 
 @router.post("/direction/commit", response_model=DirectionCommitResponse)
