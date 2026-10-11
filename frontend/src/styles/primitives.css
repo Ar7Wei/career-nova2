@@ -84,7 +84,6 @@ label {
 
 /* 数字等宽（2026-08-18 批次 3 §9.3 tabular-nums）：
    只给数字密集处——计数徽标/角标/端口输入框；纵向对齐看数字不跳。正文不开。 */
-.facts-panel-count,
 .suggestion-col-count,
 .tool-tab-count,
 .tool-tab-badge,
@@ -221,6 +220,29 @@ tr:hover td {
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-pop);
+}
+
+/* ---------------------------------------------------------------------------
+   浮窗面板头骨架（2026-10-11 grill 定稿）：所有 ToolTab 展开浮窗共用。
+   一份「标题块 + 底线」——此前 suggestion-panel-head / facts-panel-head /
+   console-panel-title 三份近乎重复的 CSS 收敛至此。只抽象面板头：
+   底部槽（suggestion-panel-foot / facts-panel-foot / console-section-footer）
+   各家保留个性，不进这套骨架。
+   --------------------------------------------------------------------------- */
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--color-border-light);
+  flex: none;
+}
+/* 面板内标题：13.5px lg 档（2026-08-24 定「与顶条标题同档，不用 15px」，2026-10-11 统一收敛）。
+   §9.1 的 15px title 档留给**内容**主标题（如分析报告 headline），不是浮窗标题。 */
+.panel-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-ink);
 }
 
 /* 页头（布局用：标题块与下方内容的间距）。标题/副标题视觉分别走 .page-title / .page-subtitle。 */

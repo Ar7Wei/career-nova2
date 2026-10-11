@@ -106,9 +106,11 @@ function toChatMessages(msgs: BackendMessage[]): ChatMessage[] {
 }
 
 /** 后端 /documents/versions 里的一版。 */
-/** 排版自由度参数（2026-09-02 grill，2026-10-09 加 side_width、段距→模块间距 module_spacing）：
+/** 排版自由度参数（2026-09-02 grill，2026-10-09 加 side_width、段距→模块间距 module_spacing，
+    2026-10-11 加页边距四边倍率 page_margin_top/right/bottom/left）：
     scale 字号倍率 / line_height 行距倍率 / module_spacing 模块间距倍率 / letter_spacing 字间距 px /
-    gutter 栏距 px（左右两栏缝隙）/ side_width 右栏宽度 %。
+    gutter 栏距 px（左右两栏缝隙）/ side_width 右栏宽度 % /
+    page_margin_* 页边距四边倍率（缩放版心四周留白，模板嵌套层不动、每层乘系数）。
  *
  * ⚠️ **键名按后端 `app/schemas/resume.py::Typography` 原样写（蛇形）**，不做驼峰转换——
  * 本仓无 snake↔camel 转换层，`created_at`/`original_name`/`resume_json` 等入前端时同样原样
@@ -122,9 +124,16 @@ export interface Typography {
   letter_spacing: number
   gutter: number
   side_width: number
+  page_margin_top: number
+  page_margin_right: number
+  page_margin_bottom: number
+  page_margin_left: number
 }
 /** 默认排版配置（与后端 Typography() 对齐；行距默认 1.0=模板出厂基准，2026-10-09 拨正）。 */
-export const DEFAULT_TYPOGRAPHY: Typography = { scale: 1, line_height: 1, module_spacing: 1, letter_spacing: 0, gutter: 55, side_width: 28 }
+export const DEFAULT_TYPOGRAPHY: Typography = {
+  scale: 1, line_height: 1, module_spacing: 1, letter_spacing: 0, gutter: 55, side_width: 28,
+  page_margin_top: 1, page_margin_right: 1, page_margin_bottom: 1, page_margin_left: 1,
+}
 
 /** 洗一道后端来的 typography（2026-10-09 改名自愈）：老数据带旧 `spacing` 键 → 搬到 `module_spacing`；
     缺字段补默认值。后端本已自愈，这里兜一层前端直读场景的底。 */

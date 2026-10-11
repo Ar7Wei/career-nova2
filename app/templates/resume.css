@@ -105,7 +105,8 @@ li:first-child {
   width: 210mm;
   box-sizing: border-box;
   height: auto;
-  padding-top: 20px;
+  /* 顶部页边第 1 层（共 20+35 两层，2026-10-11 提成 --page-margin-top-k 倍率）：乘系数缩放，基准 20 写死。 */
+  padding-top: calc(20px * var(--page-margin-top-k, 1));
   margin: 0 auto;
   font-family: system-ui, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   color: #222222;
@@ -153,7 +154,8 @@ li:first-child {
   display: flex;
   justify-content: space-between; /* 左靠左、右靠右，缝隙在中间 */
   column-gap: var(--gutter, 55px); /* 栏距（排版参数，可调） */
-  padding: 0px 50px 50px 50px;
+  /* 右/底/左三条页边各乘对应倍率（2026-10-11，--page-margin-{right,bottom,left}-k），基准 50 写死。上保持 0。 */
+  padding: 0px calc(50px * var(--page-margin-right-k, 1)) calc(50px * var(--page-margin-bottom-k, 1)) calc(50px * var(--page-margin-left-k, 1));
   margin-top: -10px;
 }
 .content > .table > .main {
@@ -175,7 +177,9 @@ li:first-child {
 
 .basics {
   background: transparent;
-  padding: 35px 50px 20px 50px;
+  /* 顶部页边第 2 层（乘 --page-margin-top-k）+ 右/左页边（乘 right/left-k），基准 35/50 写死（2026-10-11）。
+     底 20 是头部与主区的内部缝（模块间距性质），不进页边距、保持原样。 */
+  padding: calc(35px * var(--page-margin-top-k, 1)) calc(50px * var(--page-margin-right-k, 1)) 20px calc(50px * var(--page-margin-left-k, 1));
   width: 100%;
 }
 .basics .table {

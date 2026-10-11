@@ -54,28 +54,6 @@ class Suggestion(BaseModel):
     severity: Severity = "medium"
 
 
-class PendingPrescription(BaseModel):
-    """旧 `optimization_pending` 表的一行（**只读，供「改进」收录期用**）。
-
-    旧表已停用待 DROP；本模型只为 `promote_suggestion` 读一条 proposed 处方、
-    以及软结清后的行速览——新代码一律用 `ChangeRecord`。
-    """
-
-    model_config = {"extra": "ignore"}
-
-    id: int
-    type: SuggestionType = "structure"
-    target: str = ""
-    original: str = ""
-    suggested: str = ""
-    reason: str = ""
-    severity: Severity = "medium"
-    status: str = "proposed"
-    origin: SuggestionOrigin = "job_analysis"
-    document_id: int = 0
-    resolved_in_document_id: int | None = None
-
-
 class ChangeItem(BaseModel):
     """一个改动点（记录内的子项，**可独立定论**）。
 
@@ -128,12 +106,6 @@ class ChangeStatusRequest(BaseModel):
     record_id: int
     status: str
     change_id: int | None = None
-
-
-class PromotionRequest(BaseModel):
-    """投递页处方「改进」的入参：要收录的旧处方行 id。"""
-
-    suggestion_id: int
 
 
 class OptimizationDecideResponse(BaseModel):

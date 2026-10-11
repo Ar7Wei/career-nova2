@@ -9,6 +9,11 @@ connector，抛 AppError；不碰 HTTP。
 - **kick 同步锁**：猎聘一轮后端自循环、自记账（限流信号在后端）；前程无忧一轮
   Electron 驱动、报结果（限流信号在 Electron）。kick 只推进猎聘，前程无忧的推进靠
   Electron 报 crawl-state。
+- **一脚 = 两平台各一轮（2026-10-10）**：全局门控（apply_mode / 方向 / backlog）在 kick
+  **入口判一次**，两家共享——进门过闸则猎聘一轮 + 前程无忧一轮都放行，不过闸则都不爬。
+  旧写法把全局门控塞进每家的 `_should_crawl`、每判一次都重数 backlog，于是先跑的猎聘用增量
+  把 backlog 顶过阈值，同一脚里后跑的前程无忧永远轮不到（当 quota≥threshold 时成死结）。
+  平台级只认「这家自己当天爬到没爬到 / 限没限流」（`_source_crawlable`），不看 backlog。
 - **三态是组级**：exhausted/throttled 记到查询组粒度——组 1 空页 = 组 1 exhausted、
   游标移到组 2；所有组都到底才整家 exhausted。
 - **游标二维 (组, 页)**：page 存平台原生页号（猎聘 0 起 / 前程无忧 1 起）。撞 cap →
@@ -49,6 +54,22 @@ def next_round_id() -> int:
     """分配下一个抓取轮次 id（进程内单调）。一次 kick 调一次，两平台共用。"""
     global _round_counter
     _round_counter += 1
+    return _round_counter
+
+
+async def seed_round_counter() -> int:
+    """启动时把轮次计数器播种到「jobs 表里已有的最大 crawl_round_id」（2026-10-10）。
+
+    旧实现计数器只在进程内、重启归零（注释原文认可"重启后从 0 重来、撞号无害"）。但撞号
+    并非无害：新一轮的号会等于旧岗位的号，批次分析（按号取"本轮那批"）就把**新旧两批混作
+    一批**。修法——启动时从持久数据续号，重启后接着数，不再与既有岗位撞号。
+
+    返回播种后的当前值（供日志核对）；无岗位则保持 0。
+    """
+    global _round_counter
+    jobs = await jobs_repo.list_jobs()
+    rounds = [j.crawl_round_id for j in jobs if j.crawl_round_id is not None]
+    _round_counter = max(rounds) if rounds else 0
     return _round_counter
 
 
@@ -169,27 +190,20 @@ async def _source_crawlable(source: str) -> bool:
     return bool(_crawlable_groups(groups, datetime.now(UTC), _today()))
 
 
-async def _should_crawl(source: str) -> bool:
-    """门控（decision 4/10）：apply_mode 开 + 方向非空 + 未处理 < 触发值 + 该平台尚有可爬组。
+async def _gate_reason_from(global_reason: CrawlGateReason) -> CrawlGateReason:
+    """把 kick 进门判定的全局门控原因，收敛成前端指示器信号（**不再重判 backlog**）。
 
-    返回 False = 该平台本轮不爬（Electron 据此跳过 DOM 一轮 / 后端跳过猎聘一轮）。
+    - crawled → 至少一家尚有可爬组 = 仍 crawled；两家都无可爬组 → 细分 throttled（冷却期，
+      等 15 分钟）vs exhausted（当天爬完）。
+    - 其余全局原因（apply_mode_off / no_direction / backlog_full）原样透传。
+
+    2026-10-10：本函数只吃 kick 已经判好的全局原因，**不自己再数 backlog**——同一脚里猎聘那轮
+    会加增量，若这里重数就会被自己顶成 backlog_full，job51 永远轮不到。
     """
-    if await _global_gate() != "crawled":
-        return False
-    if not await _source_crawlable(source):
-        logger.info("crawl_gate_all_exhausted_or_throttled", source=source)
-        return False
-    return True
-
-
-async def _gate_reason() -> CrawlGateReason:
-    """这一脚整体的门控结果（前端指示器信号）。crawled = 至少一家尚有可爬组。"""
-    reason = await _global_gate()
-    if reason != "crawled":
-        return reason
+    if global_reason != "crawled":
+        return global_reason
     if await _source_crawlable("liepin") or await _source_crawlable("job51"):
         return "crawled"
-    # 两家都无可爬组 → 受限；细分 throttled（冷却期，等 15 分钟）vs exhausted（当天爬完）。
     for source in ("liepin", "job51"):
         direction = await get_direction()
         probes = _query_groups(direction)
@@ -312,13 +326,16 @@ async def jobs_repo_ingest(raw_jobs: list[dict], epoch: int | None):
     return await ingest_jobs(items, data_epoch=epoch)
 
 
-async def _job51_advice(s, direction, round_id: int) -> CrawlStateResult | None:
+async def _job51_advice(s, direction, round_id: int, global_reason: CrawlGateReason) -> CrawlStateResult | None:
     """前程无忧只读建议：该不该爬 + 当前游标起点（Electron 从这开始 DOM 一轮）。
 
     round_id 由 kick 统一分配（与猎聘那段共用一个）——Electron 用它戳 `crawl_round_id`，
     投递页分析据此取「本轮那批」（两个平台的岗位同属一轮，§11.7.4）。
+
+    门控只认 kick 进门时的全局判决（`global_reason`），不自己再判——否则猎聘那轮的增量会在
+    同一脚内把自己顶成 backlog_full（2026-10-10 修的死结）。平台级只认「这家自己还能爬吗」。
     """
-    if not await _should_crawl("job51"):
+    if global_reason != "crawled" or not await _source_crawlable("job51"):
         return None
     state = await crawl_repo.get_crawl_state("job51")
     gi = state.group_idx if state else 0
@@ -329,7 +346,12 @@ async def _job51_advice(s, direction, round_id: int) -> CrawlStateResult | None:
 async def kick() -> KickResponse:
     """事件驱动的一脚（前端 kickCrawl → 后端）。
 
-    门控 + 持锁跑猎聘一轮（自循环 + 自记账）→ 返回猎聘结果 + 前程无忧只读建议。
+    2026-10-10 定稿：**一个触发 = 两个平台各跑一轮**。
+    - **全局门控在进门时判一次**（`global_reason`），跨同脚的两家共享——否则先跑的猎聘用增量
+      把 backlog 顶过阈值，同一脚里后跑的前程无忧就永远轮不到（死结）。
+    - 进门过闸 → 猎聘一轮（后端自循环）+ 前程无忧建议（Electron 之后驱动 DOM 一轮），两家各一轮；
+      进门不过闸 → 都不爬，`gate_reason` 透传原因。
+    - 平台级只认「这家自己当天爬到没爬到 / 限没限流」（`_source_crawlable`），不看 backlog。
     前程无忧的实际爬取由 Electron 在本响应之后驱动、报 crawl-state 记账。
     """
     s = await get_settings()
@@ -339,13 +361,17 @@ async def kick() -> KickResponse:
     # 分配即用——即使某平台那轮被门控拒/失败/核爆丢弃，这个号也只是空号（计数单调）。
     round_id = next_round_id()
 
+    # 全局门控：本脚入口判一次，之后两家共享这个判决（防同脚内自噬，2026-10-10）。
+    global_reason = await _global_gate()
+
     liepin: CrawlStateResult | None = None
-    if await _should_crawl("liepin"):
+    if global_reason == "crawled" and await _source_crawlable("liepin"):
         async with _kick_lock:  # 防重入：锁内跑完整轮
-            # 持锁后再读一次状态（锁外门控与锁内推进之间方向可能变/核爆可能发生）
+            # 持锁后再读一次状态（锁外判决与锁内推进之间方向可能变/核爆可能发生）；
+            # 但**不重判全局门控**——进门的判决就是本脚的判决。
             s = await get_settings()
             direction = await get_direction()
-            if await _should_crawl("liepin"):
+            if await _source_crawlable("liepin"):
                 try:
                     liepin = await _run_liepin_round(s, direction, epoch, round_id)
                 except EpochChangedError as e:
@@ -357,11 +383,10 @@ async def kick() -> KickResponse:
                     logger.exception("crawl_liepin_round_failed")
                     liepin = None
 
-    job51 = await _job51_advice(s, direction, round_id)
-    # gate_reason：这一脚整体的门控结果（前端指示器信号）。猎聘跑过 / 前程无忧有建议 = crawled；
-    # 否则按全局门控原因，或两家都无货 → all_exhausted_or_throttled。在猎聘一轮**之后**再判——
-    # 一轮刚撞限流/exhausted 会立刻把该平台标记成不可爬，此时重判才能反映「受限」真值。
-    gate_reason = await _gate_reason()
+    job51 = await _job51_advice(s, direction, round_id, global_reason)
+    # gate_reason：这一脚整体的门控结果（前端指示器信号）。吃进门时的全局判决，不重判 backlog
+    # （重判会被猎聘那轮的增量顶成 backlog_full，正是死结本身）。
+    gate_reason = await _gate_reason_from(global_reason)
     return KickResponse(
         liepin=liepin,
         job51=job51,

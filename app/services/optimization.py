@@ -5,7 +5,8 @@
 与 `preferences(kind=custom)`（自定义标准）——「优化点和改进记录本就是一回事」。
 
 - 落库：聊天 agent（`record_change` / `suggest_improvements`）→ pending（面板待定）；
-  投递页分析产的处方 → 同样落这里（origin=job_analysis），点「改进」收录（`promote_suggestion`）。
+  投递页分析产的处方 → 同样落这里（origin=job_analysis），点「改进」= 子项 pending→confirmed
+  （走 `/optimization/record/status`，与面板定论同一端点）。
 - 操作粒度 = **单条子项**：`set_change_item_status(record_id, change_id, status)` 逐条定论；
   记录级 `set_record_status` 只在子项全空或整条存废时用。
 - 跨版本决策：`kind=decision` 的记录每版注入生成/改写 prompt（`build_decisions_text`）；
@@ -25,10 +26,8 @@ from app.repositories.optimization import (
     append_change_items,
     clear_all_change_records as _clear_all_change_records,
     get_change_record,
-    get_suggestion,
     list_change_records,
     query_change_records,
-    soft_settle_by_status,
     soft_settle_change_records,
     update_change_item_status,
     update_record_status,
@@ -251,20 +250,23 @@ async def record_change(
     )
 
 
-async def _append_or_create_by_reason(reason: str, changes: list[dict]) -> ChangeRecord:
-    """同原因不新开行：已有一条**活跃的 change 记录**用同一 reason 就 append 子项，否则新建。
+async def _append_or_create_by_reason(
+    reason: str, changes: list[dict], *, origin: str = "agent"
+) -> ChangeRecord:
+    """同原因不新开行：已有一条**活跃的同来源 change 记录**用同一 reason 就 append 子项，否则新建。
 
     兑现工具契约里「同原因的新改动 append 进同一条、不重复抄原因」。只在 kind=change
-    的活跃记录里找——decision 是跨版本约束，不与本轮整改混。
+    的活跃记录里找——decision 是跨版本约束，不与本轮整改混。**来源要一致才并**：
+    agent 聊天提的与投递页处方（origin=job_analysis）即使撞了同一句 reason 也不混行。
 
     原因先行时 changes 可为空：这一支会新建一条 reason 挂着的空记录，后续再 append。
     """
     reason = reason.strip()
     for r in await list_change_records(kind="change", active_only=True):
-        if r.reason.strip() == reason and r.id is not None:
+        if r.origin == origin and r.reason.strip() == reason and r.id is not None:
             updated = await append_change_items(r.id, changes) if changes else r
             return updated or r
-    return await record_change(reason, changes, kind="change")
+    return await record_change(reason, changes, kind="change", origin=origin)
 
 
 async def set_change_item_status(record_id: int, change_id: int, status: str) -> str:
@@ -297,9 +299,25 @@ async def set_record_status(record_id: int, status: str) -> str:
     return f"改动记录 #{record_id} 已标为 {status}。"
 
 
-async def pending_records(*, origin: str | None = None) -> list[ChangeRecord]:
-    """读当前活跃（未结清）的改动记录，供面板/渲染。origin 可选过滤（agent/job_analysis）。"""
-    return await list_change_records(origin=origin, active_only=True)
+async def pending_records() -> list[ChangeRecord]:
+    """读优化点面板四栏的活跃改动记录。
+
+    **帘子（apply.md §11.7.7）**：未收录的处方（origin=job_analysis、子项仍 pending）
+    不进四栏——点「改进」（子项→confirmed）才进。但 confirmed 的处方子项**得让面板看见**
+    （已确认栏），而 origin 是**记录级**的，不能整记录排除（否则已收录的也被挡）。故读全部
+    活跃记录，对 job_analysis 记录只保留**已定论子项**（confirmed/rejected/discussing），
+    把仍 pending 的处方子项滤掉；滤完一个子项都不剩的纯未收录处方整条不进面板。
+    """
+    records = await list_change_records(active_only=True)
+    out: list[ChangeRecord] = []
+    for r in records:
+        if r.origin != "job_analysis":
+            out.append(r)
+            continue
+        visible = [c for c in r.changes if c.status != "pending"]
+        if visible:
+            out.append(r.model_copy(update={"changes": visible}))
+    return out
 
 
 async def all_change_records(*, kind: str | None = None) -> list[ChangeRecord]:
@@ -349,41 +367,6 @@ async def list_pending_change_lines() -> list[str]:
 async def clear_all_change_records() -> int:
     """核爆：清空全部改动记录。"""
     return await _clear_all_change_records()
-
-
-async def promote_suggestion(suggestion_id: int) -> ChangeRecord | None:
-    """投递页处方「改进」：把一条 proposed 处方收录成一条改动记录，原行结清。
-
-    2026-09-23 起处方并入 change_records——面板只读新表，故这里落新记录、把旧行软标
-    archived（记 resolved_in_document_id 留溯源），而不是旧实现的 proposed → pending。
-
-    仅 proposed 可收录（已被 agent/用户操作过的不再重复收录）。到这一步面板就多了一行——
-    而面板**本就每轮注入**聊天 agent（`_assembly.py`），故这既是"收录"也是"交给 agent"。
-    """
-    row = await get_suggestion(suggestion_id)
-    if row is None or row.status != "proposed":
-        return None
-    _ensure_not_applying()
-    # 收录进新表：旧行一条 = 新记录的一个子项（reason 沿用处方的理由，缺失给通用标题）。
-    rec = await record_change(
-        row.reason.strip() or "投递页分析处方",
-        [
-            {
-                "target": row.target,
-                "original": row.original,
-                "suggested": row.suggested,
-                "status": "confirmed",  # 「改进」= 用户已认可这条处方 → 直接进已确认栏，可「开始改」
-                "type": row.type,
-                "severity": row.severity,
-            }
-        ],
-        origin="job_analysis",
-        document_id=row.document_id,
-    )
-    # 旧行软结清（不删，留溯源）。discard=False：它被收录进新记录，不算被丢弃。
-    await soft_settle_by_status({"proposed"}, row.document_id or rec.document_id, ids={suggestion_id})
-    logger.info("prescription_promoted", suggestion_id=suggestion_id, record_id=rec.id)
-    return rec
 
 
 async def clear_settled_for_new_version(

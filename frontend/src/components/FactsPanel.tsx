@@ -131,9 +131,8 @@ export function FactsPanel() {
       onOpen={load}
       panelClassName="facts-panel-window"
     >
-      <div className="facts-panel-head">
-        <span className="facts-panel-title">{t('resume.factsPanel')}</span>
-        <span className="facts-panel-count">{facts.length}</span>
+      <div className="panel-head">
+        <span className="panel-title">{t('resume.factsPanel')}</span>
       </div>
       <BusyOverlay busy={busy} label={busyLabel} />
 

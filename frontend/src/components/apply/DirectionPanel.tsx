@@ -228,9 +228,12 @@ export function DirectionPanel() {
   }
 
   return (
-    <div className="console-modal-body">
-      {/* 浮窗标题（原 Modal 标题移入：ToolTab 浮窗无自带标题栏） */}
-      <div className="console-panel-title">{t('apply.consoleTitle')}</div>
+    <>
+      {/* 浮窗标题：统一浮窗骨架 panel-head（2026-10-11 收敛）。固定不滚——滚动由下方 body 承担。 */}
+      <div className="panel-head">
+        <span className="panel-title">{t('apply.consoleTitle')}</span>
+      </div>
+      <div className="console-modal-body">
 
       {/* 模块一：检索条件（可折叠，默认收起） */}
       <Section
@@ -340,6 +343,7 @@ export function DirectionPanel() {
 
       {/* 模块三：登录平台（恒展开，无 icon） */}
       <PlatformLoginBar />
-    </div>
+      </div>
+    </>
   )
 }

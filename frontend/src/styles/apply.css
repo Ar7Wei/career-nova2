@@ -431,29 +431,30 @@
 .console-panel {
   width: 620px;
   max-width: calc(100vw - 2 * var(--space-4));
-  padding: var(--space-3) var(--space-4);
-  overflow-y: auto;
+  max-height: 70vh; /* 2026-10-11 G1：限高——原无上限，展开折叠块会超出屏幕底部 */
   z-index: 60;
-  /* 城市下拉渲染在面板内（withinPortal:false，见 QueryGroupsEditor）——两处必须同源：
-     portal 下拉点选项在 body、ToolTab 的 useClickOutside 误判为外部点击把面板收回，
-     故下拉改画在面板内；而 .tool-panel 默认 overflow:hidden 会把它裁掉，这里放开。
-     面板自身滚动仍由上面的 overflow-y:auto 承担。 */
-  overflow: visible;
+  /* 圆角裁切 + 内部滚动（2026-10-11 G1 修复）：原 overflow:visible 是为「城市下拉画在面板内
+     不被 .tool-panel 的 overflow:hidden 裁掉」做的妥协——代价是①内容不被 14px 圆角裁切
+     （顶穿圆角、玻璃边界没了）②不能内部滚动。改回 hidden 恢复圆角+滚动；下拉仍 withinPortal:false
+     渲染在面板内（躲 useClickOutside 误收面板，那套不动），dropdown z-index:100 盖过面板内模块即可，
+     无需溢出面板物理边界。
+     容器 0 padding（2026-10-11 H1）：padding 交给 panel-head / console-modal-body 各自管（同简历页约定）——
+     原容器带 16px padding，把 panel-head 的 12px 顶成离边 29px，与简历页 13px 不一致。 */
+  overflow: hidden;
 }
 
-/* 浮窗标题（原 Modal 标题移入：ToolTab 浮窗无自带标题栏） */
-.console-panel-title {
-  font-size: var(--font-size-title);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-ink);
-  padding-bottom: var(--space-2);
-}
-
-/* 浮窗内容：三个平行模块（原 .console-modal-body，去 Modal min-width 假设） */
+/* 浮窗内容：三个平行模块（原 .console-modal-body，去 Modal min-width 假设）。
+   面板头走共享骨架 .panel-head（2026-10-11 收敛，原 .console-panel-title 已删）。
+   滚动容器（2026-10-11 G1）：panel overflow:hidden 只裁圆角，滚动由本层承担；
+   panel-head 固定不滚。padding 12px（H1）：与简历页 edit-panel-body 等一致。 */
 .console-modal-body {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3);
 }
 
 /* Pad 内平行模块：统一「标题行 + 内容」结构（登录平台块仍用此 wrapper） */
@@ -816,17 +817,13 @@
   background: var(--color-soft);
 }
 
-/* 日历面板：挂在触发钮下方，absolute 定位；z-index 抬过 .tool-panel(60)。玻璃拟态皮肤。 */
+/* 日历面板：挂在触发钮下方，absolute 定位；z-index 抬过 .tool-panel(60)。
+   玻璃皮肤走共享 .glass 原语（2026-10-11 收敛，原手写三件套 + 10px 圆角已删，圆角跟浮窗统一 14px）。 */
 .apply-date-panel {
   position: absolute;
   top: calc(100% + var(--space-1));
   right: 0;                 /* 控件右对齐，面板从右缘向左铺 */
   z-index: 300;
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-pop);
   padding: var(--space-3);
 }
 
@@ -1240,40 +1237,33 @@
   min-width: 0;
 }
 
-/* 触发标签：Sparkles + 标题 + 待收录处方数角标 */
+/* 触发标签：Sparkles + 标题（计数角标走 ToolTab 原生 badge，2026-10-11 删自绘 .analysis-trigger-count） */
 .analysis-trigger-label {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
 }
-.analysis-trigger-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--color-primary);
-  color: #fff;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-}
 
-/* 展开浮窗：玻璃质感与 console-panel 同源，宽度窄些（报告正文为主） */
+/* 展开浮窗：玻璃质感与 console-panel 同源，宽度窄些（报告正文为主）。
+   滚动结构（2026-10-11 G1 统一）：panel overflow:hidden 只裁圆角，滚动由 .analysis-body 承担——
+   原 panel 上单类 overflow-y:auto 会被 .tool-panel 的 overflow:hidden 顶掉（同 specificity，源序后者胜），
+   实际不生效；改成与 facts/console 一致的「面板裁圆角 + body 滚动」。 */
 .analysis-panel {
   width: 520px;
   max-width: calc(100vw - 2 * var(--space-4));
   max-height: 60vh;
-  padding: var(--space-3) var(--space-4);
-  overflow-y: auto;
   z-index: 60;
+  overflow: hidden; /* 裁圆角；滚动由 .analysis-body 承担。容器 0 padding（2026-10-11 H1），交给 panel-head/analysis-body。 */
 }
 
 .analysis-body {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3); /* H1：与简历页 body 一致（12px） */
 }
 
 /* 分析中 / 空态 */

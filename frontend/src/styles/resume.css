@@ -152,6 +152,46 @@
   font-size: var(--font-size-sm);
   font-variant-numeric: tabular-nums;
 }
+/* 页边距四边（2026-10-11）：一行四个输入框（上/右/下/左），不用滑杆。
+   复用 .edit-panel-item 的三列 grid：标签占第 1 列，四个输入框整体放第 2 列（弹性、与滑块同位），
+   小字落第 2 列第 2 行——标签与输入框同行，对齐其它设置项。 */
+.edit-panel-margins .edit-panel-label {
+  grid-column: 1;
+  grid-row: 1;
+}
+.edit-panel-margin-row {
+  grid-column: 2;
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr); /* 四个输入框均分 */
+  gap: 6px; /* 比 --space-2 略紧，挤出一行四格 */
+}
+.edit-panel-margin-cell {
+  display: flex;
+  flex-direction: row; /* 输入框 + 边名（上/右/下/左）同行，文字在框右边 */
+  align-items: center;
+  gap: 3px;
+}
+.edit-panel-margin-cell .edit-panel-number {
+  /* 覆盖全局 .edit-panel-number 的 width:64px + flex:none（那个是滑杆项的固定宽），
+     这里格子本来就窄，输入框弹性吃剩余宽度。 */
+  width: auto;
+  flex: 1;
+  min-width: 0;
+}
+/* 窄格内压缩 Mantine NumberInput 自带的左右内边距，把宽度让给数字（字号不动，保持 --font-size-sm）。 */
+.edit-panel-margin-cell .edit-panel-number input {
+  padding-left: 4px;
+  padding-right: 4px;
+}
+.edit-panel-margin-caption {
+  font-size: var(--font-size-xs);
+  color: var(--color-placeholder);
+  flex: none;
+}
+.edit-panel-margins .edit-panel-meta {
+  grid-column: 2; /* 小字回落到输入框列（第 2 列），与滑块项同位 */
+}
 /* 小字里的「默认 N倍/px」：去斜体、墨色弱一级，跟在范围后作对照。 */
 .edit-panel-def {
   font-style: normal;
@@ -1002,25 +1042,6 @@
   position: relative;
   z-index: 1;
 }
-.facts-panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-3);
-  border-bottom: 1px solid var(--color-border-light);
-  flex: none;
-}
-.facts-panel-title {
-  font-size: var(--font-size-title); /* 2026-08-18 批次 3：15px title 档 */
-  font-weight: var(--font-weight-semibold);
-}
-.facts-panel-count {
-  font-size: var(--font-size-xs);
-  color: var(--color-placeholder);
-  background: var(--color-soft);
-  border-radius: 999px;
-  padding: 0 var(--space-1);
-}
 .facts-panel-body {
   flex: 1;
   overflow-y: auto;
@@ -1335,18 +1356,6 @@
   /* 2026-08-13 层叠修复：fixed 浮窗不设 z-index 会被聊天输入框（Mantine Textarea 层叠更高）
      盖住。与资料集浮窗同层 z-index:60，盖过输入框。 */
   z-index: 60;
-}
-.suggestion-panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-3);
-  border-bottom: 1px solid var(--color-border-light);
-  flex: none;
-}
-.suggestion-panel-title {
-  font-size: var(--font-size-lg); /* 2026-08-24：面板内标题与顶条标题同档（13.5px），不用 15px */
-  font-weight: var(--font-weight-semibold);
 }
 .suggestion-list {
   flex: 1;
@@ -1846,7 +1855,7 @@
 /* 一条记录：原因 + 其下改动点 */
 .decision-record {
   padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm); /* 2026-10-11 收敛：面板内内容条统一 6px（原 10px 是漏网，它是内容条非容器） */
   border: 1px solid var(--color-border-light);
   background: var(--color-soft);
   display: flex;

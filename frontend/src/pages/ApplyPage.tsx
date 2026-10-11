@@ -193,7 +193,7 @@ function TabTimeControls() {
           </Button>
         </div>
         {open && (
-          <div className="apply-date-panel">
+          <div className="apply-date-panel glass">
             <DayPicker
               mode="range"
               selected={selected}
@@ -421,7 +421,6 @@ export function ApplyPage() {
   const interviews = useApplyStore((s) => s.interviews)
   const counts = useApplyStore((s) => s.counts)
   const tab = useApplyStore((s) => s.tab)
-  const lastRoundId = useApplyStore((s) => s.lastRoundId)
   const setTab = useApplyStore((s) => s.setTab)
   const kick = useApplyStore((s) => s.kick)
   const refreshList = useApplyStore((s) => s.refreshList)
@@ -518,7 +517,7 @@ export function ApplyPage() {
               {tab === 'unprocessed' && <ConsoleTrigger />}
               {/* 分析面板（§11.7.1）：未处理（本轮批次）/ 已投递（日报）两 tab 有；录用不做。 */}
               {(tab === 'unprocessed' || tab === 'applied') && (
-                <ApplyAnalysisPanel tab={tab} roundId={lastRoundId} />
+                <ApplyAnalysisPanel tab={tab} />
               )}
             </div>
             <div className="apply-console-actions">

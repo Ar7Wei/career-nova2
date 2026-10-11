@@ -119,8 +119,8 @@ export function DecisionPanel() {
 
   return (
     <ToolTab icon={ScrollText} label={t('resume.decisionPanel')} onOpen={load} panelClassName="decision-panel">
-      <div className="suggestion-panel-head">
-        <span className="suggestion-panel-title">{t('resume.decisionPanel')}</span>
+      <div className="panel-head">
+        <span className="panel-title">{t('resume.decisionPanel')}</span>
       </div>
       <BusyOverlay busy={busy} label={busyLabel} />
       <div className="decision-panel-body">

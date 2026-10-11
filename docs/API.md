@@ -94,6 +94,7 @@
 ### 优化点（1.2，前缀 `/api/v1`）
 > **2026-09-23 一张表**：优化点 = **改动记录**（`change_records`）——`reason`（为什么，主体）+ `changes`（改什么，复合子项，各自带 status）。取代旧的扁平建议流（`optimization_pending`，已停用）。
 > 面板读 `/optimization/records`，**逐条子项**改状态走 `/optimization/record/status`。旧的 `/pending`、`/accept`、`/reject`、`/discuss`、`/retract`、`/update` 六个端点随旧表停用一并删除。
+> **`scope=active` 的帘子（2026-10-11）**：投递页分析产的处方（`origin=job_analysis`）**子项仍 `pending` 时不返回**（只在分析面板待着），点「改进」转 `confirmed` 后才进四栏。
 
 #### `GET /api/v1/optimization/records`
 读改动记录。`kind` 可选过滤 `change`/`decision`；`scope` 决定取哪些：
@@ -134,17 +135,17 @@
 - 响应 `200` `OptimizationDecideResponse`：`{ "result": "改动点 #7.1 已标为 confirmed。" }`。
 - `409`：文档任务（生成/改写/回滚/重置）执行中——撞锁，稍后再操作。
 
-#### `POST /api/v1/optimization/promote`
-收录一条投递页处方进优化点——投递页分析面板的「改进」按钮（apply.md §11.7.7）。
-- 请求体 `PromotionRequest`：`{ "suggestion_id": 31 }`（旧处方行 id，来自分析报告的 `suggestions`）。
-- 行为：**落一条改动记录**（`origin=job_analysis`，子项直接 `confirmed`——点「改进」= 用户已认可），
-  并把旧处方行软结清（`archived`，留溯源）。不再改旧行的状态。
-- 响应 `200` `OptimizationDecideResponse`：`{ "result": "处方已收录为改动记录 #12。" }`；
-  `404`：处方不存在或不是待收录状态（已收录的再点无效）。
-- 到这一步面板就多了一行，而面板**本就每轮注入聊天 agent**——这既是"收录"也是"交给 agent"。
+#### 投递页处方「改进」→ `POST /api/v1/optimization/record/status`
+投递页分析面板的「改进」按钮（apply.md §11.7.7）就是上面那个**子项状态迁移**端点——
+处方与分析产出**同落 `change_records`**（`origin=job_analysis`、子项 `pending`），
+点「改进」= 把该子项 `pending → confirmed`（同一记录、不复制新行）。**没有单独的 promote 端点**
+（2026-10-11 删；旧表 `optimization_pending` 随之无任何读写口，待 DROP）。
+- 收录前，未收录的处方**不进优化点面板四栏**（那道「帘子」）；`confirmed` 后才出现在「已确认」栏，可「开始改」。
+- **分析面板与优化点是同一 records 的两个视图**，不是两份数据、不存在"同步"。
 
 > **2026-08-25（§12.6 D8）**：`POST /optimization/decide` 改名 `POST /optimization/update`；`POST /optimization/proposal/confirm`、`POST /optimization/proposal/dismiss` 删除（提议卡 + `propose_suggestion` 工具废除）。`/optimization/update` 已在 2026-09-23 随旧表停用删除。
 > **2026-09-09**：`POST /optimization/apply` 删除——「开始改」折进统一简历图（见下「简历生成」），走 `POST /resume/generate` 的 `apply_confirmed=true`。
+> **2026-10-11**：`POST /optimization/promote` 删除——处方并入 `change_records` 后，「改进」改走 `/optimization/record/status`（子项级状态迁移）。
 
 ### 简历生成（1.3，前缀 `/api/v1`）
 > 统一「出简历」流水线（2026-09-07 合并）：**生成、改写、开始改同一入口**——都是「出草稿 → 人看 → 确认落库」。跑统一图到 `human_gate` 挂起（产出经 checkpointer 持久化，**重启不丢**）→ 人拍板才写库（版本变更 = 新 session）。冷/暖由图入口判（无当前 JSON → facts 生成；有 → 暖态改写）。确认支持「重新生成」（revise 回图重改、不落库；**意见可选可空**，2026-09-08 从「带意见重改」改名并放开空意见）。
@@ -349,7 +350,7 @@
   - `job51`：只读建议——`null` = 不该爬；非 null 则 Electron 据 `group_idx`/`page` 跑前程无忧 DOM 一轮。
   - `data_epoch`：核爆计数器，Electron 当前程无忧一轮的检查点基线。
   - `job51_quota`/`cap`：前程无忧一轮参数（凑满 quota 停 / 最多扫 cap 页）。
-  - `round_id`（2026-09-14 加，apply.md §11.7）：本轮抓取轮次 id——**一次 kick 一个、两平台共用**。前端在 kickCrawl 尾部拿它调 `GET /analysis/unprocessed?round_id=`；岗位的 `crawl_round_id` 列据此标归属（首触即定）。
+  - `round_id`（2026-09-14 加，apply.md §11.7）：本轮抓取轮次 id——**一次 kick 一个、两平台共用**。岗位的 `crawl_round_id` 列据此标归属（首触即定）。前端**不再用它调分析**（`GET /analysis/unprocessed` 缺省即从 `jobs` 推本轮，2026-10-10）；保留在响应里仅供诊断/日志。
   - `gate_reason`（2026-09-01 加，投递页「求职之路」指示器信号）：这一脚整体的门控结果。枚举——
     - `crawled`：至少一家在爬（正常）。
     - `apply_mode_off`：大闸关。
@@ -501,8 +502,8 @@
 > 设计与理由 → `docs/design/apply.md` §11.7。
 
 #### `GET /api/v1/analysis/unprocessed?round_id=`
-未处理 tab 的批次分析（本轮那批岗位）。**一轮爬完触发**——前端在 `kickCrawl` 尾部拿 `round_id` 调。
-- 查询参数：`round_id`（必填，抓取轮次 id——分析输入 = **本轮抓到的那批**，检索条件会改、轮次间不可比）。
+未处理 tab 的批次分析（本轮那批岗位）。**一轮爬完触发**——前端在 `kickCrawl` 尾部调（**不传 `round_id`**）。
+- 查询参数：`round_id`（**可选**，抓取轮次 id——分析输入 = **本轮抓到的那批**，检索条件会改、轮次间不可比）。缺省时后端取 `jobs` 表里**最大的 `crawl_round_id`** 当本轮键；一条岗位都没有 → 返回 `status: "missing"`。（2026-10-10：不再要求前端传轮次——进程内轮次号重启归零、门控空踢也占号，信它会指向空轮次。）
 - 响应 `200` `AnalysisReportOut`：
   ```json
   {
@@ -533,9 +534,10 @@
     坏块（kind 不认得 / chart 配错）单独丢、text 照显。**兼容旧缓存**：无 `blocks` 只有 `body` 时折成单个 text 块。
   - `meta`：统计口径——`total` 本批岗位数 / `liepin`·`job51` 来源分布 / `with_jd` 有 JD 数
     （前端据此标注"深度分析（有 JD）vs 概览（无 JD）"，不让用户以为覆盖不全都一样深）。
-  - `suggestions`：**待收录的处方**（`origin=job_analysis`、子项仍 `pending` 的改动记录）——**不进优化点面板**
-    （面板只读带子项的记录；这些子项还没被用户认可），点「改进」走 `POST /optimization/promote`
-    收录成一条改动记录（子项直接 `confirmed`）→ 面板本就每轮注入聊天 agent → 去简历页拍板。
+  - `suggestions`：**待收录的处方**——`change_records` 记录（`origin=job_analysis`、子项仍 `pending`）的数组，
+    每条**同原因聚成一条记录多子项**（与优化点面板同构）。收录前**不进优化点面板四栏**（那道「帘子」）；
+    点「改进」= 该子项 `pending → confirmed`，走 `POST /optimization/record/status`（**同一记录、不复制新行**）
+    → 进优化点面板「已确认」栏，可「开始改」。
   - **2026-09-15 graph 化**：batch 走 `graphs/analysis.py`（load → prepare → compute_stats → analyze →
     persist），analyze 用带工具位的 Agent（详见 apply.md §11.7.6）。两种数据源两种分析法不变：猎聘
     （无 JD、结构化标签）代码聚合；前程无忧（有 JD）逐岗读 JD 提炼（留在 service prepare 阶段）。

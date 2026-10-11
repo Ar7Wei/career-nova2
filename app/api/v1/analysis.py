@@ -10,7 +10,7 @@
 「算一次存一次」：有缓存直接返回 ready；没有则起后台任务（同一 scope+key 防重入）返回
 computing，前端轮询到 ready。**不阻塞请求**——LLM 慢，展开面板不该干等。
 
-「改进」按钮的收录走 `/optimization/promote`（落一条改动记录、结清原处方行），不在这儿。
+「改进」按钮 = 子项 pending→confirmed，走 `/optimization/record/status`（与面板定论同一端点），不在这儿。
 """
 
 import asyncio
@@ -51,18 +51,33 @@ def _placeholder(scope: str, key: str, status: str) -> AnalysisReportOut:
 
 @router.get("/analysis/unprocessed", response_model=AnalysisReportOut)
 async def unprocessed_analysis(
-    round_id: int = Query(..., description="抓取轮次 id——分析输入 = 本轮那批岗位"),
+    round_id: int | None = Query(
+        None,
+        description="抓取轮次 id——分析输入 = 本轮那批岗位。缺省 = 后端取 jobs 表里最大的轮次"
+        "（重启后前端不必自己记轮次；进程内轮次号会归零、门控空踢也占号，信它反而指向空轮次）。",
+    ),
 ) -> AnalysisReportOut:
-    """未处理批次分析（报告 + 待收录处方）。有则读、无则后台补算返回 computing。"""
-    key = str(round_id)
-    cached = await analysis_service.read_batch(round_id)
+    """未处理批次分析（报告 + 待收录处方）。有则读、无则后台补算返回 computing。
+
+    round_id 缺省 → 用「jobs 里最大的 crawl_round_id」当本轮键（从持久数据推，不信任进程内
+    计数）——这就是「本批暂无岗位可分析」的修复：旧实现信 kick 返回的轮次号，重启/空踢后
+    会指向一个没岗位的轮次。
+    """
+    rid = round_id if round_id is not None else await analysis_service.latest_batch_round_id()
+    if rid is None:
+        return _placeholder("batch", "", "missing")  # 一条岗位都没有
+    key = str(rid)
+    cached = await analysis_service.read_batch(rid)
     if cached is not None:
         return cached
     # 本轮无岗位 → 没东西可算，别起后台任务（否则前端永远轮询 computing）。
-    if not await analysis_service.batch_has_input(round_id):
+    if not await analysis_service.batch_has_input(rid):
+        return _placeholder("batch", key, "missing")
+    # 刚算失败、还在冷却期 → 返回 missing，别让前端轮询把失败的批次反复重跑（烧 token）。
+    if analysis_service.should_skip_after_failure("batch", key):
         return _placeholder("batch", key, "missing")
     if not analysis_service.is_computing("batch", key):
-        _spawn(analysis_service.summarize_and_analyze_batch(round_id))
+        _spawn(analysis_service.summarize_and_analyze_batch(rid))
     return _placeholder("batch", key, "computing")
 
 
@@ -75,6 +90,8 @@ async def applied_analysis() -> AnalysisReportOut:
         return cached
     # 窗口内无投递活动 → 没东西可算，别起后台任务（否则前端永远轮询 computing）。
     if not await analysis_service.daily_has_input():
+        return _placeholder("daily", key, "missing")
+    if analysis_service.should_skip_after_failure("daily", key):
         return _placeholder("daily", key, "missing")
     if not analysis_service.is_computing("daily", key):
         _spawn(analysis_service.refresh_daily())
@@ -89,6 +106,8 @@ async def interview_analysis(interview_id: int) -> AnalysisReportOut:
     if cached is not None:
         return cached
     if not await analysis_service.interview_has_input(interview_id):
+        return _placeholder("interview", key, "missing")
+    if analysis_service.should_skip_after_failure("interview", key):
         return _placeholder("interview", key, "missing")
     if not analysis_service.is_computing("interview", key):
         _spawn(analysis_service.refresh_interview(interview_id))

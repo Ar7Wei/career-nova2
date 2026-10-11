@@ -320,7 +320,8 @@ WebContentsView 的核心代价 = 主进程专属 + 手动 `setBounds` 定位（
   3. **进入投递页**（在场即踢，受 `should_crawl` 门控——顺手解冷启动：apply_mode 开、backlog=0、应用常驻托盘时，进页面就是叫醒事件）；
   4. **开「求职之路」开关**（apply_mode 关→开）。
 - **跃迁检测去重**（治"切 tab / 改排序 / 改筛选都 `refreshList`"的 UI 抖动）：`maybeKick()` 记一个"是否已处于该踢状态"布尔，只有当 `unprocessed` **从 `≥ 触发值` 向下跃迁到 `< 触发值`**（或首次进入该踢状态）时才真发一次 kick；之后连续拿到同样的 `unprocessed=0` 只有第一次触发。
-- 三层去重（全程零计时器）：前端跃迁检测（去 UI 抖动）→ Electron `kickCrawl` IPC 的 **re-entrancy 闸**（爬虫在跑就跳过，去并发）→ 后端 `should_crawl`（去"不该爬"）。
+- 三层去重（全程零计时器）：前端跃迁检测（去 UI 抖动）→ Electron `kickCrawl` IPC 的 **re-entrancy 闸**（爬虫在跑就跳过，去并发）→ 后端门控（去"不该爬"）。
+- **一脚 = 两平台各一轮（2026-10-10 修）**：全局门控（apply_mode / 方向 / backlog）在 kick **入口判一次**、两家共享。进门过闸 → 猎聘一轮 + 前程无忧一轮都放行（一个触发补齐两个平台）；不过闸 → 两家都不爬。**关键**：全局门控绝不在"跑完猎聘之后"再判一次——旧写法它塞在每家的 `should_crawl` 里、每判一次都重数 backlog，于是先跑的猎聘用一轮增量把 backlog 顶过阈值，同一脚里后跑的前程无忧就永远轮不到（当 `quota ≥ 触发值` 时是死结：猎聘每家每轮自噬）。平台级只认「这家自己当天爬到没爬到 / 限没限流」（exhausted/throttled），不看 backlog。
 - 触发值 = 保留的未处理底仓，**默认 5**（≤ 触发值就补；不是"清零才补"，避免空仓 + 避免 exhausted 转天解禁时缺那次踢）。
 
 **② 每平台独立 quota + 续页游标（废"从第 1 页重爬"）+ 统一后端记账**：
@@ -549,10 +550,11 @@ WebContentsView 的核心代价 = 主进程专属 + 手动 `setBounds` 定位（
   - **坑**：代码全用 UTC，而"今天"是**本地日**（UTC+8）——按 UTC 算会把今天投的岗算进昨天。**按本地日算**。
 - **展开不算**（未处理是爬完才算）：首次展开若缓存未就绪，显示"分析中…"（人就在面板前等，无需推送）。
 
-**"一轮爬完"的落点（2026-09-14 落地时定）**：
+**"一轮爬完"的落点（2026-09-14 落地时定；2026-10-10 修轮次解析）**：
 - **一轮 = 一次 kick**（后端猎聘一段 + Electron 前程无忧一段），`round_id` 由 kick 统一分配、两平台共用——批次键必须跨平台（§11.7.4 的批次本就假定"一批来自两个平台"）。
-- **触发点在前端 kickCrawl 尾部**（`GET /analysis/unprocessed?round_id=`）——等前程无忧那段跑完（那个慢），后端不耦合爬虫 service。**分析范围 = 本轮进库的那批**（用户定：检索条件会改、轮次间不可比）。
-- **端点非阻塞**：有缓存直接返回；没有则起后台任务返回 `computing`，前端轮询到 `ready`。**无岗位的轮次返回 `missing`**（不起任务、不写空报告）。
+- **批次键从持久数据推，不信进程内轮次号（2026-10-10 修）**：`GET /analysis/unprocessed` 的 `round_id` 改为**可选**——缺省时后端取 **`jobs` 表里最大的 `crawl_round_id`** 当本轮键。（旧稿「前端在 kickCrawl 尾部拿 kick 返回的 `round_id` 调」作废。）真因：`_round_counter` 是进程内计数、**重启归零**，且 `kick()` 里 `round_id = next_round_id()` 在门控判断**之前**就调用——**被门控拦下的空踢也占号**；于是重启/被门控后前端指向一个**没岗位的空轮次**，界面显示「本批暂无岗位可分析」，真报告却躺在别处读不到。改从持久数据推（哪一轮真进了岗位就以那一轮为本轮那批），重启/刷新后自然对回。另：后端启动时 `seed_round_counter()` 从 `max(crawl_round_id)` **续号**（`main.py` lifespan），重启后不再与既有岗位撞号（撞号会把新旧两批混作一批）。
+- **触发点在前端 kickCrawl 尾部**（`GET /analysis/unprocessed`，不传轮次）——等前程无忧那段跑完（那个慢），后端不耦合爬虫 service。**分析范围 = 本轮进库的那批**（用户定：检索条件会改、轮次间不可比）。
+- **端点非阻塞**：有缓存直接返回；没有则起后台任务返回 `computing`，前端轮询到 `ready`。**无岗位的轮次返回 `missing`**（不起任务、不写空报告）。**失败也留痕**（进程内冷却 ~20s）：分析跑挂后冷却期内返回 `missing`，避免前端轮询把失败的批次**反复重跑**（烧 LLM）；冷却期一过放行一次重试（transient 失败能自愈）。
 - **`analysis_reports.content` 只装嘱咐**；`batch` 的**处方**另落 `change_records`（`origin=job_analysis`，子项 `pending`）——报告与处方是"一屏两物"。
 
 #### 11.7.6 流程形状：**graph 化 + analyze 用 Agent**（2026-09-15 方向修正，经确认）
@@ -587,15 +589,16 @@ route_scope → load(取数) → prepare(备料) → compute_stats(代码前置�
 
 ```
 分析产出「处方」(change_records, origin=job_analysis, 子项 pending)
-   ↓ 用户点「改进」
-优化点面板 (子项 confirmed)   ← 到这一步，聊天 agent 自动就看见了
+   ↓ 用户点「改进」= 子项 pending → confirmed（/optimization/record/status，同一记录不复制新行）
+优化点面板 (该子项进「已确认」栏)   ← 到这一步，聊天 agent 自动就看见了
    ↓ 去简历页跟 agent 聊
 agent 改简历 / 提议改方向（refine_direction / commit_direction，均已存在）
 ```
 
-- **「改进」= 收录成一条改动记录**（2026-09-23，`promote_suggestion`）：把旧处方行落成 `change_records` 的一条记录、**子项直接 `confirmed`**（点「改进」= 用户已认可这条处方），并把原行软结清（`archived`，留溯源）。**分析面板与优化点是同一件事的两个视图**，不是两份数据、不存在"同步"。
-- **Agent 不需要接收动作**：优化点面板**本来就每轮注入**聊天 agent 的 system prompt（`_assembly.py` → `render_records_panel`）。**待收录（子项 pending）的处方不注入**——「改进」就是那道帘子。
-- **分析面板需排除已收录的处方**（`_pending_prescriptions` 只取仍有 pending 子项的 job_analysis 记录），否则分析建议一产出就"已经在待办里"，「改进」按钮失去意义。
+- **「改进」= 子项状态迁移**（2026-10-11 修订）：处方与分析产出**同落 `change_records`**（`origin=job_analysis`、子项 `pending`）。点「改进」= 把该子项 `pending → confirmed`（走 `/optimization/record/status`，与面板定论**同一端点**）——**同一记录、不复制新行**。**分析面板与优化点是同一 change_records 的两个视图**，不是两份数据、不存在"同步"。旧的 `POST /optimization/promote` 端点与旧表 `optimization_pending` 读口已随之全部删除。
+- **同原因聚合（与优化点同构）**：处方落库时**按 reason 聚类**（`_append_or_create_by_reason`，与聊天 agent 的 `suggest_improvements` 同一路径）——同一原因的多条处方合进**一条记录多个子项**，不各开一行、不重复抄原因。分析面板用与优化点面板**同一个** `PendingGroupList` 组件渲染（按原因分组、卡片可折叠），动作区只换成单个「改进」。
+- **Agent 不需要接收动作**：优化点面板**本来就每轮注入**聊天 agent 的 system prompt（`_assembly.py` → `render_records_panel`）。
+- **分析面板需排除已收录的处方**（`_pending_prescriptions` 只取仍有 pending 子项的 job_analysis 记录）。**面板侧那道帘子**（2026-10-11）：优化点面板读口 `pending_records()` 对 job_analysis 记录只保留**已定论子项**（confirmed/rejected/discussing），把仍 pending 的处方子项滤掉——**收录前处方不进四栏**，否则分析建议一产出就"已经在待办里"，「改进」按钮失去意义。
 - **方向降级归聊天 agent**（用户定）：投递页**只做分析**，不产可执行的方向建议。"迎合不了市场 → 换方向"这种判断由 agent 在聊天里做。**投递页不自动化降级。**
 
 #### 11.7.8 要补的洞（都是既有短板，不是新功能）

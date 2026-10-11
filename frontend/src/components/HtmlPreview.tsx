@@ -74,13 +74,17 @@ export function injectScale(html: string, typography: Typography, pageZoom: numb
   // 解构出的字段名与后端 Typography 一致（蛇形，无转换层）；右侧 CSS 变量名
   // （--scale/--lh/--module-spacing/--ls/--gutter）是模板约定，另起一名，别把两边混为一谈。
   let rules = ''
-  const { scale, line_height, module_spacing, letter_spacing, gutter, side_width } = typography
+  const { scale, line_height, module_spacing, letter_spacing, gutter, side_width, page_margin_top, page_margin_right, page_margin_bottom, page_margin_left } = typography
   if (scale !== 1) rules += `--scale:${scale};`
   if (line_height !== 1) rules += `--lh:${line_height};`
   if (module_spacing !== 1) rules += `--module-spacing:${module_spacing};`
   if (letter_spacing !== 0) rules += `--ls:${letter_spacing}px;`
   if (gutter !== 55) rules += `--gutter:${gutter}px;`
   if (side_width !== 28) rules += `--side-width:${side_width}%;`
+  if (page_margin_top !== 1) rules += `--page-margin-top-k:${page_margin_top};`
+  if (page_margin_right !== 1) rules += `--page-margin-right-k:${page_margin_right};`
+  if (page_margin_bottom !== 1) rules += `--page-margin-bottom-k:${page_margin_bottom};`
+  if (page_margin_left !== 1) rules += `--page-margin-left-k:${page_margin_left};`
   if (rules) rules = `:root{${rules}}`
   if (pageZoom !== 1) rules += `html{zoom:${pageZoom}}` // 控件 B 整页缩放（真实重排布局）
   if (!rules) return html

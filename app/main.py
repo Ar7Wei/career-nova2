@@ -19,6 +19,7 @@ from app.core.logging import logger
 from app.graphs.checkpoint import close_checkpoint_store, init_checkpoint_store
 from app.repositories import dispose_engine, health_check, init_db
 from app.services import error_events  # noqa: F401 - import 即注入错误事件记录器（ADR 0017 系统气泡·错误红条落库）
+from app.services.crawl import seed_round_counter
 from app.services.llm import llm_service
 from app.services.resume import reconcile_extract_state
 from app.services.settings import get_settings
@@ -39,6 +40,8 @@ async def lifespan(app: FastAPI):
     await get_settings()  # 加载持久化设置，同步 APP_LANGUAGE / LLM 三件套到 runtime
     await llm_service.load_degraded_providers()  # 读回降级记忆（json_schema 不支持的 base_url）
     await init_checkpoint_store()  # 装配编排 checkpointer（ADR 0012；:memory: 业务库时跳过）
+    seeded = await seed_round_counter()  # 轮次计数器续号：重启后不与既有岗位撞号（2026-10-10）
+    logger.info("round_counter_seeded", max_round_id=seeded)
     await reconcile_extract_state()  # 启动对账：内存抽取状态与 DB 对齐（上传后未确认就关闭的恢复）
     yield
     await close_checkpoint_store()

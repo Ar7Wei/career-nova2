@@ -166,9 +166,10 @@
 > **落地**：加 `--font-size-title:15px`；画布 `#f8f9fa→#f1f3f5`；4 处面板边框 `border-light→border` + `.card` 去投影去过渡；区段标题应用 title 档；tabular-nums 给版本行/计数/日期/端口；**顺手修 4 个幽灵变量**（`--bg-color`/`--text-color`/`--radius-full`/`--line-height-sm` 引用了但未定义，样式曾静默失效）。
 
 ### 9.1 字号：加第 5 档 `title`
-- 新增 `--font-size-title: 15px`（字重 600），**专给区段/卡片标题**（`.settings-group h2`/`.suggestion-panel-title`/`.extract-card-title`/`.card h2` 非页头时）。
+- 新增 `--font-size-title: 15px`（字重 600），**专给区段/卡片/内容主标题**（`.settings-group h2`/`.card h2` 非页头时、分析报告 headline）。
 - `--font-size-heading: 22px` 严格限定**页头 h1 / 卡片主标题**。
 - 梯度：`heading 22 → title 15 → lg 13.5(正文/控件) → sm 12(次要) → xs 11(最小)`。title 档**只给标题，正文/控件不许碰**，写进本文件锁死。
+- **⚠️ 修订（2026-10-11）**：**浮窗（ToolTab 展开面板）的内标题不用 15px，用 13.5px（`--font-size-lg`）**，与顶条触发胶囊同档（2026-08-24 即定「面板内标题与顶条标题同档，不用 15px」，当时只落了 4 个面板）。15px title 档留给**内容**主标题（如分析报告的一句话结论 headline），不是浮窗标题。浮窗面板头统一走共享骨架 `.panel-head`/`.panel-title`（见 §15）。
 
 ### 9.2 分离度：Linear 路线（卡片不加投影）
 - 卡片/面板**不加投影**——靠 ①边框 `--color-border-light(#eef1f3)` → `--color-border(#dee2e6)` 加深 + ②画布 `--color-canvas` 压暗（`#f8f9fa` → `#f1f3f5`）让面板立起来。
@@ -187,7 +188,9 @@
 > 治"一个按钮一个样"：尺寸/字号/圆角/形态各处 drift，且与旁边文字/控件不对齐。
 > **落地**：`alger.ts` 注入尺寸网格（杀 12.5 + 圆角统一 6px）；建议/提议/冲突卡手写按钮全迁 Mantine（删 `.suggestion-action-*`/`.chat-suggest-*` 孤儿类）；三动作配色=栏色 light 版；危险确认实心红→subtle 红。`.suggestion-toggle`/`.suggestion-retract` 为专用/微型组件，保留手写。**（2026-09-11 更正：这两个也已迁 Mantine `<Button>` + 覆盖类，见 §2 全量迁移）**
 >
-> **2026-08-24 追改（grill "按钮太傻"）**：`.tool-tab` 手写重按钮（白底+投影+边框）也废了——`ToolTab` 触发钮改 **Mantine `variant="subtle" size="sm"` 幽灵钮**（active 态用 `default` 浅底显形），去白底投影。优化点/资料集图标换 `Sparkles`/`FolderOpen`。建议卡三动作（接受/拒绝/讨论）改**紧凑纯图标 `btn-icon compact-sm` + Mantine `<Tooltip>` 释义**（hover 出气泡，去文字）。**hover 释义统一用 Mantine `<Tooltip>`，不用原生 `title`**（样式能跟玻璃风统一）。
+> **2026-08-24 追改（grill "按钮太傻"）**：`.tool-tab` 手写重按钮（白底+投影+边框）也废了——`ToolTab` 触发钮改走 Mantine `<Button>`，去手写白底投影。优化点/资料集图标换 `Sparkles`/`FolderOpen`。建议卡三动作（接受/拒绝/讨论）改**紧凑纯图标 `btn-icon compact-sm` + Mantine `<Tooltip>` 释义**（hover 出气泡，去文字）。**hover 释义统一用 Mantine `<Tooltip>`，不用原生 `title`**（样式能跟玻璃风统一）。
+>
+> **⚠️ 触发钮形态更正（2026-10-11）**：ToolTab 触发钮实际是 **`default` 白底描边钮**（非幽灵钮），open 态切 `light` 浅底显形——本文件此前 §10/§12 写「subtle 幽灵钮」是没删干净的旧描述，以代码为准。**唯一例外 = 第 N 稿**（`ghost=true`，真幽灵 subtle，纯文字、hover/open 文字变绿 `--color-primary-active`），是有意保留的酷形态。其余工具（优化点/资料集/编辑项/日志/投递分析/检索控制台）一律 default 白底钮。
 
 ### 10.1 尺寸网格（3 档高度 + 2 档字号 + 统一圆角）
 - **高度 3 档**：`30px` 标准（主按钮/工具条入口/表单控件，Mantine `sm` 从 36 收敛）｜`26px` 紧凑（卡片内动作：接受/拒绝/撤回/回看，`compact-sm`）｜`20px` 微型（**仅纯图标、无文字**：卡片内 ▾ 折叠、撤回等低调辅助钮，`.btn-icon-sm`）。
@@ -247,7 +250,7 @@
 ## 12. 浮窗原语：ToolTab 唯一（2026-08-24 grill 定稿）
 
 - **"标签 pill + 点击展开浮窗"是 ToolTab 一家的活**，不许为某个工具单开第二条相似但不同的浮窗路。
-- 触发标签 = **Mantine `variant="subtle" size="sm"` 幽灵钮**（active 态用 `default` 浅底显形）——`ToolTab` 统一渲染（**2026-08-24 追改，见 §治理记录**：手写 `.tool-tab` 重按钮已废，`.tool-tab` 类不再存在）。
+- 触发标签 = **Mantine `default` 白底描边钮 `size="sm"`**（open 态切 `light` 浅底显形）——`ToolTab` 统一渲染（手写 `.tool-tab` 重按钮已废，`.tool-tab` 类不再存在）。**唯一例外 = 第 N 稿**（`ghost=true`，真幽灵 subtle，纯文字、hover/open 文字变绿），有意保留。见 §10 形态更正。
 - **`align` 参数**：`align:'right'`（默认）浮窗右缘对齐标签右缘、向左铺（优化点/资料集挂聊天框右上）；`align:'left'` 浮窗左缘对齐标签左缘、向右铺（检索控制台在行首左侧）。宽度/尺寸经 `panelClassName` 覆写（资料集 560px、检索控制台 620px）。
 - 浮窗 = `.tool-panel glass`，`position:fixed` 视口定位（脱离容器 overflow 裁切），`useClickOutside` 收起。
 - **下钻/辅助信息该用哪种容器**：贴合上下文、随手关的小信息 → ToolTab 浮窗或内联 glass；一组要专注编辑的设置/完整对象 → 可用聚焦容器（设置页即此类）。岗位详情的容器形态**冻结待定**（线头）。
@@ -284,5 +287,18 @@
   - 不用 `.glass` 类（在 `styles/` 里）：theme 注入不该反向依赖应用 CSS。
 - **不设高度上限**：`main.tsx` 的 `<Notifications notificationMaxHeight="none">`。Mantine 默认 `200`（内联 `max-height`）+ `overflow:hidden` 会**静默裁掉**超长文案——信息肉眼可见地丢，本地单用户应用宁可长一点。极长的文案（如核爆确认）超一屏时**改用 Modal**，别硬塞 toast。
 - **跨整页重载的提示**：`reload()` 会连**同一帧**的 toast 一起抹掉。需要「reload 后仍要看到」的提示走 `lib/pendingToast.ts`——reload 前 `armPendingToast()` 把**字典 key**（非已经过语言的文案）+ 当前语言存 sessionStorage，`App` 启动时补弹。存 key 不存文案：重载后按**当时**的语言查（设置响应还没回来，App 已先用预存 locale `seed` i18n，避免首帧按默认 zh 排再跳）。
+
+## 15. 浮窗面板骨架（2026-10-11 grill 定稿）
+
+> 治理范围：简历页 5 个 + 投递页 2 个 ToolTab 展开浮窗 + 投递日期浮层。此前各家面板头/计数/圆角 drift，统一收敛。
+
+- **浮窗皮肤**：一律 `.glass`（14px 圆角 + 玻璃三件套 + `--shadow-pop`）。禁手写三件套——投递日期浮层（`.apply-date-panel`）曾手写 + 用 10px 圆角，已改挂 `.glass` 类、删手写。
+- **面板头骨架（共享，唯一）**：`.panel-head`（flex 两端对齐 + padding space-3 + `border-bottom` 底线）+ `.panel-title`（13.5px lg 档 semibold）。**所有 ToolTab 浮窗共用这两个类**，不许再开 `xxx-panel-head`/`xxx-panel-title` 局部变体（`suggestion-panel-head`/`facts-panel-head`/`console-panel-title` 已删）。
+  - **面板内标题 = 13.5px（lg 档）**，不是 15px title 档——15px 留给**内容**主标题（如分析报告 headline）。见 §9.1 修订。
+- **面板头计数**：不放计数徽标。资料集 header 右上曾有的 count 胶囊已删（计数在触发胶囊的角标上，header 里冗余）。
+- **计数徽标（触发胶囊上）**：一律走 `ToolTab.badge` prop（右上角角标，数量+优先级色，字色走 `--color-on-primary`），**禁自绘胶囊**——投递分析曾自绘 `.analysis-trigger-count`（16px 绿胶囊 + 硬编码 `#fff`），已改 `badge={{color:'green'}}` 并删类。
+- **触发钮**：`default` 白底描边钮（open 切 light），第 N 稿 ghost 例外。见 §10/§12。
+- **面板内卡片圆角**：统一 6px（`--radius-sm`）。`decision-record` 曾用 10px（内容条非容器，误用容器档），已收 6px。背景各按语义保留（suggestion-card 玻璃底 / fact-item、decision-record 灰底）。
+- **底部槽**：**不抽象、各家保留个性**（`suggestion-panel-foot` / `facts-panel-foot` / `facts-add` / `console-section-footer`），骨架只管到面板头。
 
 

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { SlidersHorizontal, Wand2 } from 'lucide-react'
 import { Slider, NumberInput, Button } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
@@ -26,6 +26,7 @@ interface ParamSpec {
   key: keyof Typography
   /** i18n 文案键（驼峰）——与 key 不同形是**故意的**：key 要跟后端字段名走，文案键跟 i18n 命名走。 */
   labelKey: 'resume.fontSize' | 'resume.lineHeight' | 'resume.moduleSpacing' | 'resume.letterSpacing' | 'resume.gutter' | 'resume.sideWidth'
+    | 'resume.pageMarginTop' | 'resume.pageMarginRight' | 'resume.pageMarginBottom' | 'resume.pageMarginLeft'
   min: number
   max: number
   step: number
@@ -52,8 +53,72 @@ const PARAMS: ParamSpec[] = [
   { key: 'side_width', labelKey: 'resume.sideWidth', min: 15, max: 45, step: 1, decimals: 0, unit: '%', def: 28 },
 ]
 
+/** 页边距四边倍率（2026-10-11）：缩放版心四周留白，模板嵌套层不动、每条边的所有嵌套层同乘一个系数
+    （上=.content 顶20+.basics 顶35，右/左=.basics+table 各 50，下=.table 底 50）。默认 1.0 还原出厂，
+    冻结、不进「自动一页」求解（同 gutter/side_width）。下限 0 = 该边压到无留白。
+    交互：不用滑杆，一行四个数字输入框（上/右/下/左），顺序按 CSS 顺时针。 */
+const MARGIN_PARAMS: ParamSpec[] = [
+  { key: 'page_margin_top', labelKey: 'resume.pageMarginTop', min: 0, max: 3, step: 0.05, decimals: 2, unit: '倍', def: 1 },
+  { key: 'page_margin_right', labelKey: 'resume.pageMarginRight', min: 0, max: 3, step: 0.05, decimals: 2, unit: '倍', def: 1 },
+  { key: 'page_margin_bottom', labelKey: 'resume.pageMarginBottom', min: 0, max: 3, step: 0.05, decimals: 2, unit: '倍', def: 1 },
+  { key: 'page_margin_left', labelKey: 'resume.pageMarginLeft', min: 0, max: 3, step: 0.05, decimals: 2, unit: '倍', def: 1 },
+]
+
 const clamp = (v: number, s: ParamSpec) => Math.min(s.max, Math.max(s.min, v))
 const roundTo = (v: number, decimals: number) => Number(v.toFixed(decimals))
+
+/** 提交式数值输入框（2026-10-11 修「手感怪」）：原 NumberInput 受控 + 每击键 clamp/round/写回 store，
+ *  打字中间态（删空、`2.`、负号）被反复顶回格式化值，删不动、小数点被吃、光标跳。
+ *  改为**本地缓冲编辑**：onChange 只更新本地字符串、不碰 store 不格式化；失焦/回车才 clamp+round+
+ *  一次性提交 setParam。打字过程跟普通输入框一样顺，归一化仍在提交口兜底。
+ *  `value` 是 store 已提交的干净值；本地编辑期间不被它顶回（editingRef 闸门）。 */
+function CommitNumberInput({
+  spec,
+  value,
+  onCommit,
+  ariaLabel,
+}: {
+  spec: ParamSpec
+  value: number
+  onCommit: (spec: ParamSpec, raw: number | string) => void
+  ariaLabel: string
+}) {
+  const [text, setText] = useState<string>(String(value))
+  const [editing, setEditing] = useState(false)
+
+  // 外部值变化（滑杆拖动 / 自动一页 / 其它框提交）且本框不在编辑中 → 同步显示。
+  useEffect(() => {
+    if (!editing) setText(String(value))
+  }, [value, editing])
+
+  const commit = (raw: string | number) => {
+    setEditing(false)
+    onCommit(spec, raw) // setParam 内部已吞空值/非有限数，落库前 clamp+round
+    // 提交后用归一结果回填（store 异步刷新前先把框拉回干净值，避免停在中间态）。
+    const n = typeof raw === 'number' ? raw : Number(raw)
+    if (raw !== '' && Number.isFinite(n)) setText(String(roundTo(clamp(n, spec), spec.decimals)))
+    else setText(String(value)) // 空/非法 → 回原值
+  }
+
+  return (
+    <NumberInput
+      className="edit-panel-number"
+      value={text}
+      min={spec.min}
+      max={spec.max}
+      step={spec.step}
+      decimalScale={spec.decimals}
+      clampBehavior="none"
+      onChange={(v) => { setEditing(true); setText(String(v)) }}
+      onFocus={() => setEditing(true)}
+      onBlur={(e) => commit(e.currentTarget.value)}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() /* 触发 onBlur 提交 */ }}
+      size="xs"
+      hideControls
+      aria-label={ariaLabel}
+    />
+  )
+}
 
 /** 单条参数的范围文案：「0.5~1.5倍」/「-1~3px」（单位直接拼，GBK 安全——只用 ~倍px，禁用 ↔）。 */
 const rangeText = (spec: ParamSpec) => `${spec.min}~${spec.max}${spec.unit}`
@@ -118,10 +183,9 @@ export function EditPanel({ disabled = false }: { disabled?: boolean }) {
       disabledReason={disabled ? t('resume.editPanelDisabled') : undefined}
       closeOnIframeClick
     >
-      {/* 面板标题（2026-09-24 用户）：与版本历史/优化点等其它 ToolTab 浮窗对齐——它们都有
-          suggestion-panel-head 标题块，编辑项之前缺，补同款。 */}
-      <div className="suggestion-panel-head">
-        <span className="suggestion-panel-title">{t('resume.editPanel')}</span>
+      {/* 面板标题：统一浮窗骨架 panel-head（2026-10-11 收敛）。 */}
+      <div className="panel-head">
+        <span className="panel-title">{t('resume.editPanel')}</span>
       </div>
       <div className="edit-panel-body">
         {PARAMS.map((spec) => (
@@ -141,18 +205,7 @@ export function EditPanel({ disabled = false }: { disabled?: boolean }) {
               size="sm"
             />
             <div className="edit-panel-value">
-              <NumberInput
-                className="edit-panel-number"
-                value={typography[spec.key]}
-                min={spec.min}
-                max={spec.max}
-                step={spec.step}
-                decimalScale={spec.decimals}
-                onChange={(v) => setParam(spec, v)}
-                size="xs"
-                hideControls
-                aria-label={t(spec.labelKey)}
-              />
+              <CommitNumberInput spec={spec} value={typography[spec.key]} onCommit={setParam} ariaLabel={t(spec.labelKey)} />
               <span className="edit-panel-unit">{spec.unit}</span>
             </div>
             {/* 该项的范围 + 默认值（与 PARAMS 同源），小字落在滑块列，与滑块左缘平齐。 */}
@@ -162,6 +215,22 @@ export function EditPanel({ disabled = false }: { disabled?: boolean }) {
             </div>
           </div>
         ))}
+        {/* 页边距四边（2026-10-11）：一行四个数字输入框（上/右/下/左，CSS 顺时针），不用滑杆。 */}
+        <div className="edit-panel-item edit-panel-margins">
+          <label className="edit-panel-label">{t('resume.pageMargin')}</label>
+          <div className="edit-panel-margin-row">
+            {MARGIN_PARAMS.map((spec) => (
+              <div className="edit-panel-margin-cell" key={spec.key}>
+                <CommitNumberInput spec={spec} value={typography[spec.key]} onCommit={setParam} ariaLabel={t(spec.labelKey)} />
+                <span className="edit-panel-margin-caption">{t(spec.labelKey)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="edit-panel-meta">
+            {rangeText(MARGIN_PARAMS[0])}
+            <em className="edit-panel-def">{defaultText(MARGIN_PARAMS[0])}</em>
+          </div>
+        </div>
         {/* 自动一页（2026-09-02 grill）：隐藏求解，成功才应用；失败不动现状只提示。 */}
         <Button
           className="edit-panel-autofit"

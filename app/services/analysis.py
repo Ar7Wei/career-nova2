@@ -19,6 +19,7 @@ analyze 用**带工具位的 Agent**（`agents/analysis.py`）。原「不建 gr
 """
 
 import json
+import time
 
 from datetime import UTC, datetime, timedelta
 
@@ -42,7 +43,7 @@ from app.schemas.jobs import Job
 from app.schemas.optimization import ChangeRecord
 from app.schemas.report_block import ChartBlock, ReportBlock, TextBlock
 from app.services.llm import llm_service
-from app.services.optimization import list_change_records, record_change
+from app.services.optimization import _append_or_create_by_reason, list_change_records
 from app.utils.facts import flatten_facts
 
 # 「已投递」日报的观察窗（往回看 N 天，§11.7.5）——趋势/存量看这段，截至本地日。
@@ -52,15 +53,50 @@ DAILY_LOOKBACK_DAYS = 14
 # 不排队不重算（LLM 慢且贵，重复踢只该是空转）。单进程内一把锁 + 一个在途集合即可。
 _inflight: set[tuple[str, str]] = set()
 
+# 失败留痕 + 冷却重试（2026-10-10）：一轮分析失败后，前端轮询会立刻**再起一个后台任务重跑**
+# （每次重跑都烧 LLM、白等）。失败也记一笔，冷却期内路由返回 missing（前端停轮询）；冷却过后
+# 允许重试一次（transient 失败能自愈，不用非得重启后端）。
+_failed_at: dict[tuple[str, str], float] = {}
+_FAILED_RETRY_COOLDOWN_S = 20.0
+
 
 def is_computing(scope: str, key: str) -> bool:
     """该 (scope, key) 是否正在算（前端轮询到 computing 就继续等）。"""
     return (scope, key) in _inflight
 
 
+def should_skip_after_failure(scope: str, key: str) -> bool:
+    """该 (scope, key) 是否「刚失败、还在冷却期」——是则路由返回 missing，不重跑。
+
+    冷却期一过就把留痕清掉、返回 False（放行一次重试）。用一个短冷却而非永久标记：
+    永久标记会让 transient 失败再也自愈不了；无标记则会 1.5s 一次地反复重跑烧 token。
+    """
+    failed_at = _failed_at.get((scope, key))
+    if failed_at is None:
+        return False
+    if time.monotonic() - failed_at > _FAILED_RETRY_COOLDOWN_S:
+        _failed_at.pop((scope, key), None)
+        return False
+    return True
+
+
 def reset_inflight_for_tests() -> None:
-    """测试用：清空在途集合。"""
+    """测试用：清空在途集合 + 失败留痕。"""
     _inflight.clear()
+    _failed_at.clear()
+
+
+async def latest_batch_round_id() -> int | None:
+    """「本轮那批」的批次键 = jobs 表里最大的 `crawl_round_id`（2026-10-10）。
+
+    旧实现信 kick 返回的进程内轮次号——但那个计数器重启归零、且门控拦下的空踢也占号，
+    于是重启 / 被门控后前端会指向一个**没岗位的空轮次**（显示「本批暂无岗位可分析」，
+    真报告躺在别处读不到）。改从**持久数据**推：哪一轮真正进了岗位，就以那一轮为本轮那批。
+    无任何岗位 → None（路由据此返回 missing）。
+    """
+    jobs = await jobs_repo.list_jobs()
+    rounds = [j.crawl_round_id for j in jobs if j.crawl_round_id is not None]
+    return max(rounds) if rounds else None
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +232,7 @@ async def summarize_and_analyze_batch(round_id: int, *, force: bool = False) -> 
 
     缓存键 = 轮次 id（`scope=batch, scope_key=round_id`）。`force=False` 且已有报告 → 直接读。
     本轮无岗位 → 返回 None（不写空报告；UI 显示"本批暂无岗位"）。
+    失败留痕：跑挂了记 `_failed`，路由据此返回 missing（前端停轮询，别再反复重跑烧 token）。
     """
     key = str(round_id)
     if not force:
@@ -204,8 +241,12 @@ async def summarize_and_analyze_batch(round_id: int, *, force: bool = False) -> 
             return hit
 
     _inflight.add(("batch", key))
+    _failed_at.pop(("batch", key), None)
     try:
         return await _compute_batch(round_id, key)
+    except BaseException:  # noqa: BLE001 - 失败也留痕（含取消），记完原样抛出
+        _failed_at[("batch", key)] = time.monotonic()
+        raise
     finally:
         _inflight.discard(("batch", key))
 
@@ -258,23 +299,28 @@ async def _prepare_batch_materials(jobs: list[Job], scope: str) -> dict[str, str
 
 
 async def _persist_batch(state: AnalysisState) -> None:
-    """落库：报告（含块流）→ analysis_reports；处方 → change_records（origin=job_analysis）。"""
-    created = 0
+    """落库：报告（含块流）→ analysis_reports；处方 → change_records（origin=job_analysis）。
+
+    处方**按 reason 聚类**落库（与聊天 agent 的 `suggest_improvements` 同一条
+    `_append_or_create_by_reason` 路径）：同一原因的多条处方合进**一条记录多个子项**，
+    不各开一行、不重复抄原因——这样「同一原因聚合」在数据层就成立，与优化点面板完全同构。
+    """
+    by_reason: dict[str, list[dict]] = {}
     for p in state.prescriptions:
-        await record_change(
-            str(p.get("reason", "")).strip() or "投递页分析处方",
-            [
-                {
-                    "target": p.get("target", ""),
-                    "original": p.get("original", ""),
-                    "suggested": p.get("suggested", ""),
-                    "type": p.get("type", "structure"),
-                    "severity": p.get("severity", "medium"),
-                }
-            ],
-            origin="job_analysis",
+        reason = str(p.get("reason", "")).strip() or "投递页分析处方"
+        by_reason.setdefault(reason, []).append(
+            {
+                "target": p.get("target", ""),
+                "original": p.get("original", ""),
+                "suggested": p.get("suggested", ""),
+                "type": p.get("type", "structure"),
+                "severity": p.get("severity", "medium"),
+            }
         )
-        created += 1
+    created = 0
+    for reason, items in by_reason.items():
+        await _append_or_create_by_reason(reason, items, origin="job_analysis")
+        created += len(items)
     content = json.dumps(
         {
             "headline": state.headline,
@@ -370,6 +416,7 @@ async def refresh_daily(*, force: bool = False) -> AnalysisReportOut:
             return hit
 
     _inflight.add(("daily", day))
+    _failed_at.pop(("daily", day), None)
     try:
         state = await run_analysis(
             AnalysisState(scope="daily", scope_key=day),
@@ -378,6 +425,9 @@ async def refresh_daily(*, force: bool = False) -> AnalysisReportOut:
             persist=_persist_daily,
         )
         return AnalysisReportOut(scope="daily", scope_key=day, headline=state.headline, blocks=state.blocks)
+    except BaseException:  # noqa: BLE001 - 失败留痕，防前端轮询反复重跑
+        _failed_at[("daily", day)] = time.monotonic()
+        raise
     finally:
         _inflight.discard(("daily", day))
 
@@ -459,8 +509,12 @@ async def refresh_interview(interview_id: int, *, force: bool = False) -> Analys
             return hit
 
     _inflight.add(("interview", key))
+    _failed_at.pop(("interview", key), None)
     try:
         return await _compute_interview(interview_id, key)
+    except BaseException:  # noqa: BLE001 - 失败留痕，防前端轮询反复重跑
+        _failed_at[("interview", key)] = time.monotonic()
+        raise
     finally:
         _inflight.discard(("interview", key))
 

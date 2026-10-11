@@ -187,7 +187,7 @@
 - **禁用某一类 = 显式决定，不再自动聚合（2026-09-29）**：旧实现在版本变更清 `rejected` 时按 `type` 自动记一条「拒掉这一类：X」——前提是 reject 只来自用户鼠标，2026-08-25 agent 获得 reject 权后该前提失效（agent 把「本轮不带」落成 reject 就会替用户封整类）。现在**拒绝只关单条**；再拒到**同类**时由 agent 问用户「要不要以后这类都别提了」，用户点头才记一条**自然语言**的 `kind=decision`（如「不做量化建议」）。禁用不靠 `type`（粒度对不齐真实意图）。
 
 ### `optimization_pending`（**停用，待 DROP**）
-**旧优化建议落库**——建议组从「聊天暂存」升级为「落库对象」，完整状态机（2026-08-10 →）。**2026-09-23 起停用**：优化点统一到 `change_records`（原因 + 改动点复合表），本表**行留存不删**（供历史溯源），新代码不得再写。仅剩的一处读口是投递页处方「改进」收录时读一条 `proposed` 行、收录后把它软结清 `archived`。
+**旧优化建议落库**——建议组从「聊天暂存」升级为「落库对象」，完整状态机（2026-08-10 →）。**2026-09-23 起停用**：优化点统一到 `change_records`（原因 + 改动点复合表），本表**行留存不删**（供历史溯源），新代码不得再写。**2026-10-11 起无任何读写口**：投递页处方的「改进」改走 `change_records` 子项状态迁移（`POST /optimization/record/status`），旧读口与软结清函数一并删除。本表**待 DROP**。
 
 | 列 | 类型 | 说明 |
 |---|---|---|
@@ -210,7 +210,7 @@
 
 设计要点：
 - **本表已停用**（2026-09-23）：优化点统一到 `change_records`。此处不再列旧状态机/结清/偏好规则——现行规则见下方 `change_records`。
-- **唯一活口**：投递页处方「改进」时读一条 `proposed` 行（`get_suggestion`）、收录后把它软结清 `archived`（`soft_settle_by_status`）。其余读写函数已随迁移删除。
+- **已无任何读写口**（2026-10-11）：投递页处方的「改进」改走 `change_records` 子项状态迁移（`POST /optimization/record/status`），旧读口 `get_suggestion` / 软结清 `soft_settle_by_status` 一并删除。本表**待 DROP**。
 
 ### `preferences`（**停用，待 DROP**）
 **用户判定偏好**（拒绝项 + 自定义标准）——**2026-09-23 停用**：两者都并入 `change_records(kind=decision)`（拒绝项与自定义标准本是一正一反，同一对象）。**类别禁用不再自动产生**（2026-09-29 拆掉按 `type` 聚合——详见 `change_records` 一节），改由用户在拒绝时显式决定。本表**行留存不删**，库中 `clear_all_preferences`（核爆）仍会清空它。
@@ -331,7 +331,7 @@
 | `created_at` | DATETIME | 生成时间 |
 
 设计要点：
-- **`content` 只装嘱咐，不装处方**：报告叙事（总览/日报/面试 tips）在这里；**处方**是 `change_records` 里 `origin=job_analysis`、子项仍 `pending` 的记录（点「改进」收录）。一份报告 + 一列处方 = "一屏两物"，不是"一物两存"。
+- **`content` 只装嘱咐，不装处方**：报告叙事（总览/日报/面试 tips）在这里；**处方**是 `change_records` 里 `origin=job_analysis`、子项仍 `pending` 的记录（**同原因聚成一条记录多子项**，与优化点面板同构）。一份报告 + 一列处方 = "一屏两物"，不是"一物两存"。收录前这些处方**不进优化点面板四栏**（面板读口的「帘子」），点「改进」= 子项 `pending → confirmed`（走 `/optimization/record/status`，同一记录不复制新行）才进「已确认」栏。
 - **`blocks`（2026-09-15 文/图穿插）**：`batch`/`daily` 报告的 content 带 `blocks: list[ReportBlock]`——analyze Agent 按叙述顺序产出的 `text`/`chart` 块（**图穿插在段落之间**，0~4 张、宁缺勿滥）。`ReportBlock` 契约见 `app/schemas/report_block.py`（text=Markdown 段 / chart 内嵌 `ChartSpec`，后者见 `app/schemas/chart.py`：6 种图型、series ≤ 2、字段须在 data 内）。读缓存时逐块校验（`_parse_blocks`），坏块（kind 不认得 / chart spec 配错）丢弃降级、不拖垮整份；**兼容旧缓存**——无 `blocks` 只有 `body` 时折成单个 text 块。前端另有 `toReportBlocks` + `isChartSpec` 兜底。
 - **不存"未就绪"行**：算完才写；读不到 = 该 scope 还没算过，由 `GET /analysis/*` 补算（起后台任务返回 `computing`，前端轮询）。
 - **`batch` 的 scope_key = 轮次 id**——分析输入 = **本轮抓到的那批**（检索条件会改、轮次间不可比，§11.7 grill 定）。无岗位的轮次 → 路由返回 `missing`，不起任务、不写报告。

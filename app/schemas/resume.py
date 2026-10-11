@@ -166,7 +166,16 @@ class Typography(BaseModel):
       主两栏 table→flex 后改为单个 column-gap 值，提成可调参数）。
     - `side_width` 右栏宽度（百分比）：右栏占整版宽度的 %，默认 28（2026-10-09 提成可调参数，
       与 gutter 同性质——版式结构，不进「自动一页」求解，只手动调）。左栏弹性吃剩余。
-    对应模板 :root 的 --scale/--lh/--module-spacing/--ls/--gutter/--side-width。
+    - `page_margin_top/right/bottom/left` 页边距四边倍率（默认全 1.0，2026-10-11）：缩放版心四周留白。
+      **模板嵌套结构不动**，每个系数缩放「那条边的所有嵌套层」、保持出厂比例：
+      - 上 = `.content` 顶 20 + `.basics` 顶 35（两层同乘 top，维持 20:35）；
+      - 右/左 = `.basics` 50 + `.table` 50（同一边两处嵌套同乘一个系数）；
+      - 下 = `.table` 底 50。
+      `.basics` 的 padding-bottom 20（头部与主区之间的内部缝）是模块间距性质，不进页边距。
+      冻结、不进「自动一页」求解（同 gutter/side_width）。默认 1.0 逐字节还原出厂观感。
+    对应模板 :root 的 --scale/--lh/--module-spacing/--ls/--gutter/--side-width
+    /--page-margin-top-k/--page-margin-right-k/--page-margin-bottom-k/--page-margin-left-k
+    （`-k` 后缀标明倍率系数，同 --lh/--module-spacing 命名，区别于 px 类的 --gutter）。
 
     归一化（2026-09-02 grill「手动+自动共用硬限制」，唯一真相源在此）：
     每个字段入模型即 **clamp 到合法范围 + round 到各自小数位**（静默归一，不报错）——
@@ -183,6 +192,10 @@ class Typography(BaseModel):
     letter_spacing: float = Field(default=0.0, description="字间距 px，[-1.0,3.0]")
     gutter: float = Field(default=55.0, description="栏距 px（左右两栏缝隙），[0,120]")
     side_width: float = Field(default=28.0, description="右栏宽度 %（占整版宽度），[15,45]")
+    page_margin_top: float = Field(default=1.0, description="页边距-上倍率（缩放 .content 顶 20+.basics 顶 35），[0,3]")
+    page_margin_right: float = Field(default=1.0, description="页边距-右倍率（缩放 .basics/.table 右 50），[0,3]")
+    page_margin_bottom: float = Field(default=1.0, description="页边距-下倍率（缩放 .table 底 50），[0,3]")
+    page_margin_left: float = Field(default=1.0, description="页边距-左倍率（缩放 .basics/.table 左 50），[0,3]")
 
     # 字段名 → (下界, 上界, 小数位)。clamp+round 的唯一真相源。
     _BOUNDS: ClassVar[dict[str, tuple[float, float, int]]] = {
@@ -192,6 +205,10 @@ class Typography(BaseModel):
         "letter_spacing": (-1.0, 3.0, 1),
         "gutter": (0.0, 120.0, 0),
         "side_width": (15.0, 45.0, 0),
+        "page_margin_top": (0.0, 3.0, 2),
+        "page_margin_right": (0.0, 3.0, 2),
+        "page_margin_bottom": (0.0, 3.0, 2),
+        "page_margin_left": (0.0, 3.0, 2),
     }
 
     @model_validator(mode="before")
@@ -220,7 +237,9 @@ class Typography(BaseModel):
         return (
             f"--scale: {self.scale}; --lh: {self.line_height}; "
             f"--module-spacing: {self.module_spacing}; --ls: {self.letter_spacing}px; "
-            f"--gutter: {self.gutter}px; --side-width: {self.side_width}%"
+            f"--gutter: {self.gutter}px; --side-width: {self.side_width}%; "
+            f"--page-margin-top-k: {self.page_margin_top}; --page-margin-right-k: {self.page_margin_right}; "
+            f"--page-margin-bottom-k: {self.page_margin_bottom}; --page-margin-left-k: {self.page_margin_left}"
         )
 
 

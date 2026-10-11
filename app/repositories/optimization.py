@@ -3,8 +3,8 @@
 不知道 LLM 存在（分层红线）；返回 schemas 层模型（RORO），不裸表行。
 - **change_records**（唯一活表，2026-09-23）：优化点 = 改动记录，`reason`（为什么）+
   `changes`（改什么，JSON 复合子项，各自带 id/status）。子项级操作、软结清、关键词查询都在这里。
-- **optimization_pending / preferences**：**停用，待 DROP**。只保留「读一条 proposed 处方」
-  与「软结清旧行」两个口（`promote_suggestion` 收录处方时用），其余读写函数已删。
+- **optimization_pending / preferences**：**停用，待 DROP**。投递页处方的「改进」改走
+  `/optimization/record/status`（子级状态迁移）后，旧表在本仓库已无任何读写口。
 """
 
 import json
@@ -13,79 +13,12 @@ from datetime import UTC, datetime
 
 from sqlmodel import select
 
-from app.models.optimization import ChangeRecord, OptimizationPending, Preference
+from app.models.optimization import ChangeRecord, Preference
 from app.repositories.base import async_session_maker
 from app.schemas.optimization import (
     ChangeItem,
     ChangeRecord as ChangeRecordSchema,
-    PendingPrescription,
 )
-
-
-def _to_prescription(row: OptimizationPending) -> PendingPrescription:
-    """旧表行 → 只读传输模型（「改进」收录期用）。"""
-    return PendingPrescription(
-        id=row.id or 0,
-        type=row.type,  # type: ignore[arg-type]
-        target=row.target,
-        original=row.original,
-        suggested=row.suggested,
-        reason=row.reason,
-        severity=row.severity,  # type: ignore[arg-type]
-        status=row.status,
-        origin=row.origin,  # type: ignore[arg-type]
-        document_id=row.document_id,
-        resolved_in_document_id=row.resolved_in_document_id,
-    )
-
-
-async def get_suggestion(suggestion_id: int) -> PendingPrescription | None:
-    """按 id 读一条旧处方行（「改进」收录用）。**旧表停用**，只此一处读口。"""
-    async with async_session_maker() as session:
-        row = (
-            await session.exec(
-                select(OptimizationPending).where(OptimizationPending.id == suggestion_id)  # type: ignore[arg-type]
-            )
-        ).first()
-        return _to_prescription(row) if row is not None else None
-async def soft_settle_by_status(
-    statuses: set[str],
-    resolved_in_document_id: int,
-    *,
-    discard: bool = False,
-    ids: set[int] | None = None,
-) -> list[PendingPrescription]:
-    """版本变更统一结清（2026-08-20 软标记，取代物理删除）：按状态把活跃建议软标成终态，不删行。
-
-    ⚠️ **旧表 `optimization_pending` 已停用（2026-09-23）**——本函数只剩一个活调用：
-    `promote_suggestion` 把一条 proposed 处方收录进 change_records 后、软结清原行。
-
-    - confirmed → applied（已应用进新稿）；pending / rejected → archived（结清未应用）。
-    - discard=True（回滚）：confirmed 也 → archived——回滚是**丢弃**这轮确认的改动，没应用进
-      任何稿（目标稿是旧的上传稿），标 applied 会谎称「目标稿应用了这些改动」。
-    - 记 resolved_in_document_id（在哪个版本被结清）——溯源：哪版产生/哪版结清。
-    - discussing 不传即保留（聊一聊留到下一版本继续聊）。
-    - ids 给了就只结清这些行（单行收录用），否则按状态全量结清。
-    - **返回的行保留结清前的原状态**——供 service 计数 + 记拒绝偏好用；库里存的已是终态。
-
-    与 clear_by_status（旧物理删）的区别：行全留存，仅状态迁移。
-    """
-    async with async_session_maker() as session:
-        stmt = select(OptimizationPending).where(OptimizationPending.status.in_(statuses))  # type: ignore[attr-defined]
-        # 只结清活跃的（已终态的不重复结清）
-        stmt = stmt.where(OptimizationPending.resolved_in_document_id.is_(None))  # type: ignore[union-attr]
-        if ids is not None:
-            stmt = stmt.where(OptimizationPending.id.in_(ids))  # type: ignore[union-attr]
-        rows = (await session.exec(stmt)).all()
-        snapshot = [_to_prescription(r) for r in rows]  # 先快照原状态
-        for row in rows:
-            if discard:
-                row.status = "archived"  # 回滚：confirmed 也是被丢弃，不应用进任何稿
-            else:
-                row.status = "applied" if row.status == "confirmed" else "archived"
-            row.resolved_in_document_id = resolved_in_document_id
-        await session.commit()
-        return snapshot
 
 
 async def clear_all_preferences() -> int:

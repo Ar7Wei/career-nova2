@@ -44,8 +44,8 @@ export function VersionTab() {
 
   return (
     <ToolTab label={`第 ${store.currentVersion} 稿`} onOpen={loadOnOpen} panelClassName="version-panel" ghost>
-      <div className="suggestion-panel-head">
-        <span className="suggestion-panel-title">{t('resume.versionHistory')}</span>
+      <div className="panel-head">
+        <span className="panel-title">{t('resume.versionHistory')}</span>
       </div>
       <BusyOverlay busy={busy} label={busyLabel} />
       <div className="version-panel-body">

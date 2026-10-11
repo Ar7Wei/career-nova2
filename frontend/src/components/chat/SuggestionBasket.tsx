@@ -11,6 +11,7 @@ import { useResumeStore } from '@/stores/resumeStore'
 import { ToolTab, type ToolBadge } from '@/components/ToolTab'
 import { BusyOverlay } from '@/components/BusyOverlay'
 import { SuggestionCard } from './SuggestionCard'
+import { PendingGroupList, groupByReason, rowKey, type PanelRow } from './PendingGroupList'
 import type { ChangeItem, ChangeRecord, ChangeStatus } from '@/types/resume'
 
 /**
@@ -21,6 +22,7 @@ import type { ChangeItem, ChangeRecord, ChangeStatus } from '@/types/resume'
  *
  * - 读 `GET /optimization/records` → `ChangeRecord[]`；**按子项状态**分入四栏（操作粒度 = 单条子项）。
  * - **栏内按「原因」分组**：一个原因下 N 个改动点，只写一次原因（旧结构是每条各抄一遍 reason）。
+ *   分组展示（含待定栏卡片）与投递页改进方向共用 `PendingGroupList`（2026-10-11 抽出）。
  * - 只收**带子项**的记录：`kind=decision` 且无子项的是纯跨版本约束，不给用户看（后端仍返回）。
  * - 左栏：待定（pending）——每条**默认展开**（卡片 + 三按钮横排）。
  * - 右栏：已确认（confirmed）/ 正在聊（discussing）/ 已拒绝（rejected，版本内可撤回）。
@@ -31,15 +33,6 @@ import type { ChangeItem, ChangeRecord, ChangeStatus } from '@/types/resume'
  * - 角标优先级级联：红=pending 数 / 蓝=discussing 数 / 绿=confirmed 数 / 全 0 无。
  * - 事件驱动刷新（挂载 + resume-data-changed 事件 + 展开时）。
  */
-
-/** 面板的一行 = 「某条记录里的某个改动点」（子项级）。 */
-interface PanelRow {
-  record: ChangeRecord
-  change: ChangeItem
-}
-
-/** 行标识：记录 id + 子项 id 二元组。 */
-const rowKey = (r: PanelRow) => `${r.record.id}.${r.change.id}`
 
 /** 按子项状态把记录摊平成四栏。**只收带子项的记录**——纯决策约束不上用户面板。 */
 function derivePanel(records: ChangeRecord[]) {
@@ -58,18 +51,6 @@ function derivePanel(records: ChangeRecord[]) {
 }
 
 type PanelData = ReturnType<typeof derivePanel>
-
-/** 栏内按「原因」分组（保持记录内子项的原序）。 */
-function groupByReason(rows: PanelRow[]): { reason: string; rows: PanelRow[] }[] {
-  const groups = new Map<string, PanelRow[]>()
-  for (const r of rows) {
-    const key = r.record.reason || '简历改进'
-    const bucket = groups.get(key)
-    if (bucket) bucket.push(r)
-    else groups.set(key, [r])
-  }
-  return [...groups.entries()].map(([reason, groupRows]) => ({ reason, rows: groupRows }))
-}
 
 /** 角标优先级级联：待定>正在聊>已确认；全0 无角标（口径 = 子项数）。 */
 function computeBadge(panel: PanelData): ToolBadge | null {
@@ -249,8 +230,8 @@ export function SuggestionBasket() {
       onOpen={load}
       panelClassName="suggestion-panel"
     >
-      <div className="suggestion-panel-head">
-        <span className="suggestion-panel-title">{t('resume.suggestionBasket')}</span>
+      <div className="panel-head">
+        <span className="panel-title">{t('resume.suggestionBasket')}</span>
       </div>
       <BusyOverlay busy={busy} label={busyLabel} />
 
@@ -267,40 +248,33 @@ export function SuggestionBasket() {
               {panel.pending.length === 0 ? (
                 <div className="suggestion-col-empty">{t('resume.suggestionPendingEmpty')}</div>
               ) : (
-                <div className="suggestion-list">
-                  {groupByReason(panel.pending).map((group) => (
-                    <div key={group.reason} className="suggestion-group">
-                      <div className="suggestion-group-head" title={group.reason}>{group.reason}</div>
-                      {group.rows.map((row) => {
-                        const key = rowKey(row)
-                        return (
-                          <div key={key} className={`suggestion-card-wrap${leaving === key ? ' leaving' : ''}${entering === key ? ' entering' : ''}`}>
-                            {/* 待定：默认展开，可手动收起。原因已提到分组头，卡内不再重复。 */}
-                            <SuggestionCard suggestion={{ ...row.change, reason: '' }} typeLabel={typeLabel} collapsible>
-                              {/* 三动作（2026-08-24：面板内一律紧凑纯图标 + Tooltip 释义）。
-                                  颜色 = 目标栏色：拒绝→灰、接受→绿、聊一聊→蓝。 */}
-                              <Tooltip label={t('resume.suggestionReject')} withArrow>
-                                <Button className="btn-icon btn-icon-sm" variant="light" color="gray" size="compact-sm" aria-label={t('resume.suggestionReject')} onClick={() => reject(row)} disabled={busy}>
-                                  <X size={14} />
-                                </Button>
-                              </Tooltip>
-                              <Tooltip label={t('resume.suggestionAccept')} withArrow>
-                                <Button className="btn-icon btn-icon-sm" variant="light" color="green" size="compact-sm" aria-label={t('resume.suggestionAccept')} onClick={() => accept(row)} disabled={busy}>
-                                  <Check size={14} />
-                                </Button>
-                              </Tooltip>
-                              <Tooltip label={t('resume.suggestionDiscuss')} withArrow>
-                                <Button className="btn-icon btn-icon-sm" variant="light" color="blue" size="compact-sm" aria-label={t('resume.suggestionDiscuss')} onClick={() => discuss(row)} disabled={busy}>
-                                  <MessageCircle size={14} />
-                                </Button>
-                              </Tooltip>
-                            </SuggestionCard>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  ))}
-                </div>
+                <PendingGroupList
+                  rows={panel.pending}
+                  typeLabel={typeLabel}
+                  leaving={leaving}
+                  entering={entering}
+                  renderActions={(row) => (
+                    /* 三动作（2026-08-24：面板内一律紧凑纯图标 + Tooltip 释义）。
+                       颜色 = 目标栏色：拒绝→灰、接受→绿、聊一聊→蓝。 */
+                    <>
+                      <Tooltip label={t('resume.suggestionReject')} withArrow>
+                        <Button className="btn-icon btn-icon-sm" variant="light" color="gray" size="compact-sm" aria-label={t('resume.suggestionReject')} onClick={() => reject(row)} disabled={busy}>
+                          <X size={14} />
+                        </Button>
+                      </Tooltip>
+                      <Tooltip label={t('resume.suggestionAccept')} withArrow>
+                        <Button className="btn-icon btn-icon-sm" variant="light" color="green" size="compact-sm" aria-label={t('resume.suggestionAccept')} onClick={() => accept(row)} disabled={busy}>
+                          <Check size={14} />
+                        </Button>
+                      </Tooltip>
+                      <Tooltip label={t('resume.suggestionDiscuss')} withArrow>
+                        <Button className="btn-icon btn-icon-sm" variant="light" color="blue" size="compact-sm" aria-label={t('resume.suggestionDiscuss')} onClick={() => discuss(row)} disabled={busy}>
+                          <MessageCircle size={14} />
+                        </Button>
+                      </Tooltip>
+                    </>
+                  )}
+                />
               )}
             </div>
 

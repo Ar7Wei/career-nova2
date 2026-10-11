@@ -2,7 +2,8 @@ import { create } from 'zustand'
 import api from '@/lib/api'
 import { useSettingsStore } from '@/stores/settingsStore'
 import type { FollowupReason, FollowupStatus, Interview, InterviewOutcome, Job, JobBrief, JobCounts, JobSort } from '@/types/apply'
-import type { AnalysisReport, AnalysisScope, Prescription } from '@/types/apply'
+import type { AnalysisReport, AnalysisScope } from '@/types/apply'
+import type { ChangeRecord } from '@/types/resume'
 import { toReportBlocks } from '@/types/report_block'
 import type { ReportBlock } from '@/types/report_block'
 
@@ -77,8 +78,6 @@ interface ApplyState {
   kickRunning: boolean
   /** 最近一脚的门控结果（指示器「受限」信号）。crawled = 正常；throttled/exhausted = 受限。 */
   gateReason: CrawlGateReason
-  /** 最近一轮的抓取轮次 id（分析「本轮那批」的键）。kick 后由结果带回。 */
-  lastRoundId: number | null
   /** 投递页分析报告（按 tab 缓存；§11.7.5 算一次存一次，前端只读）。 */
   analysis: Partial<Record<'batch' | 'daily', AnalysisReport>>
 
@@ -88,12 +87,14 @@ interface ApplyState {
   refreshList: (tab: StatusTab) => Promise<void>
   /** 拉全量面试场次（日历数据源）。 */
   refreshInterviews: () => Promise<void>
-  /** 拉未处理批次分析（本轮那批）。kick 尾 + 展开面板时调。 */
-  fetchBatchAnalysis: (roundId: number) => Promise<void>
+  /** 拉未处理批次分析。**不传 round_id**——后端从 jobs 表推「本轮那批」（最大的 crawl_round_id）。
+   *  旧实现传 kick 返回的进程内轮次号：重启后计数器归零、门控空踢也占号，会指向空轮次 →
+   *  「本批暂无岗位可分析」，真报告读不到（2026-10-10）。computing 时后台轮询到 ready。 */
+  fetchBatchAnalysis: () => Promise<void>
   /** 拉已投递日报（截至昨天）。进页面/切 tab 时调。 */
   fetchDailyAnalysis: () => Promise<void>
-  /** 收录一条处方进优化点（proposed → pending）。之后从分析面板移除该条。 */
-  promotePrescription: (id: number) => Promise<void>
+  /** 收录一条处方：子项 pending→confirmed（与面板定论同一端点）。之后从分析面板移除该子项。 */
+  promotePrescription: (recordId: number, changeId: number) => Promise<void>
   setTab: (t: StatusTab) => void
   setReasonFilter: (r: FollowupReason | null) => void
   setSort: (s: JobSort) => void
@@ -127,13 +128,11 @@ async function maybeKick(): Promise<void> {
   try {
     const result = await window.desktop.kickCrawl()
     // kick 完成：读后端 gate_reason 更新受限态（复用事件驱动，零轮询）。
-    const roundId = result?.roundId ?? null
-    set({ gateReason: (result?.gateReason ?? 'crawled') as CrawlGateReason, lastRoundId: roundId })
+    set({ gateReason: (result?.gateReason ?? 'crawled') as CrawlGateReason })
     // kick 尾部踢分析（§11.7.5「一轮爬完就算」；含前程无忧轮）。等它跑完再重拉列表——
     // 否则列表先刷、分析面板还空着。分析失败不该阻断列表刷新，故单独 catch。
-    if (roundId != null) {
-      await useApplyStore.getState().fetchBatchAnalysis(roundId).catch(() => {})
-    }
+    // 不传轮次：后端从 jobs 表推「本轮那批」（进程内轮次号重启归零、空踢占号，信它反指向空轮次）。
+    await useApplyStore.getState().fetchBatchAnalysis().catch(() => {})
     // kick 完成后重拉当前 tab（新岗位补进来）
     await useApplyStore.getState().refreshList(useApplyStore.getState().tab)
   } catch {
@@ -213,21 +212,6 @@ function toFrontendJob(j: Record<string, unknown>): Job {
   }
 }
 
-/** 后端建议 → 前端处方（分析面板用）。 */
-function toFrontendPrescription(s: Record<string, unknown>): Prescription {
-  return {
-    id: Number(s.id),
-    type: s.type as Prescription['type'],
-    target: String(s.target ?? ''),
-    original: String(s.original ?? ''),
-    suggested: String(s.suggested ?? ''),
-    reason: String(s.reason ?? ''),
-    severity: (s.severity ?? 'medium') as Prescription['severity'],
-    status: 'proposed',
-    origin: 'job_analysis',
-  }
-}
-
 /** 后端报告 → 前端 AnalysisReport（snake_case → camelCase）。 */
 function toFrontendReport(r: Record<string, unknown>): AnalysisReport {
   const meta = (r.meta ?? {}) as Record<string, unknown>
@@ -250,7 +234,8 @@ function toFrontendReport(r: Record<string, unknown>): AnalysisReport {
       withJd: meta.with_jd == null ? undefined : Number(meta.with_jd),
     },
     createdAt: String(r.created_at ?? ''),
-    suggestions: Array.isArray(r.suggestions) ? (r.suggestions as Record<string, unknown>[]).map(toFrontendPrescription) : [],
+    // 处方 = ChangeRecord（后端本就是新表读模型，字段同名同形，无需转换层）。
+    suggestions: Array.isArray(r.suggestions) ? (r.suggestions as ChangeRecord[]) : [],
   }
 }
 
@@ -306,7 +291,6 @@ export const useApplyStore = create<ApplyState>((set, get) => ({
   rangeByTab: defaultRangeByTab(),
   kickRunning: false,
   gateReason: 'crawled',
-  lastRoundId: null,
   analysis: {},
 
   /** 事件驱动抓岗位：后端猎聘一轮 + 前程无忧读 DOM 一轮，完成后重拉列表。 */
@@ -316,16 +300,14 @@ export const useApplyStore = create<ApplyState>((set, get) => ({
     await get().refreshList(get().tab)
   },
 
-  /** 拉未处理批次分析（本轮那批，§11.7.5）。computing 时后台轮询到 ready。 */
-  fetchBatchAnalysis: async (roundId) => {
+  /** 拉未处理批次分析（本轮那批，§11.7.5）。不传轮次——后端从 jobs 推。computing 时轮询到 ready。 */
+  fetchBatchAnalysis: async () => {
     try {
-      const { data } = await api.get<Record<string, unknown>>('/v1/analysis/unprocessed', {
-        params: { round_id: roundId },
-      })
+      const { data } = await api.get<Record<string, unknown>>('/v1/analysis/unprocessed')
       const report = toFrontendReport(data)
       set({ analysis: { ...get().analysis, batch: report } })
       if (report.status === 'computing') {
-        scheduleAnalysisPoll(() => void get().fetchBatchAnalysis(roundId))
+        scheduleAnalysisPoll(() => void get().fetchBatchAnalysis())
       }
     } catch {
       // 分析失败：保留上一份，不静默清空（顶部面板自会显示旧报告或空态）
@@ -346,18 +328,22 @@ export const useApplyStore = create<ApplyState>((set, get) => ({
     }
   },
 
-  /** 收录一条处方进优化点（proposed → pending，§11.7.7）。成功后从分析面板移除该条。 */
-  promotePrescription: async (id) => {
+  /** 收录一条处方：子项 pending→confirmed（走 /optimization/record/status，§11.7.7）。
+   *  成功后本地把该子项从分析面板移除——记录内还有其它 pending 子项则只剔该子项，
+   *  全部定论了整条移除（与后端读口 `_pending_prescriptions` 只留仍有 pending 子项的记录一致）。 */
+  promotePrescription: async (recordId, changeId) => {
     try {
-      await api.post('/v1/optimization/promote', { suggestion_id: id })
+      await api.post('/v1/optimization/record/status', {
+        record_id: recordId,
+        change_id: changeId,
+        status: 'confirmed',
+      })
       const batch = get().analysis.batch
       if (batch) {
-        set({
-          analysis: {
-            ...get().analysis,
-            batch: { ...batch, suggestions: batch.suggestions.filter((s) => s.id !== id) },
-          },
-        })
+        const next = batch.suggestions
+          .map((r) => ({ ...r, changes: r.changes.filter((c) => c.id !== changeId) }))
+          .filter((r) => r.changes.length > 0)
+        set({ analysis: { ...get().analysis, batch: { ...batch, suggestions: next } } })
       }
       // 优化点面板数据在简历页拉，跨页无需同步（同一后端真相源，进页面自然读最新）
     } catch {

@@ -9,7 +9,7 @@
  */
 
 import type { ReportBlock } from '@/types/report_block'
-import type { Suggestion } from '@/types/resume'
+import type { ChangeRecord } from '@/types/resume'
 
 /** 岗位来源平台（v1：猎聘主 connector + 前程无忧走 Electron 读 DOM；BOSS/智联已砍 2026-08-31）。 */
 export type JobSource = 'liepin' | 'job51'
@@ -112,19 +112,6 @@ export type AnalysisScope = 'batch' | 'daily' | 'interview'
 /** 报告就绪态：ready 有缓存 / computing 正在算（前端轮询）/ missing 没东西可算。 */
 export type AnalysisStatus = 'ready' | 'computing' | 'missing'
 
-/** 分析产出的「处方」——可被收录进优化点面板（status=proposed，点「改进」→ pending）。 */
-export interface Prescription {
-  id: number
-  type: Suggestion['type']
-  target: string
-  original: string
-  suggested: string
-  reason: string
-  severity: Suggestion['severity']
-  status: 'proposed'
-  origin: 'job_analysis'
-}
-
 /** 一份分析报告（GET /analysis/*）。headline 一句话 + blocks 正文块流 + meta 统计口径。 */
 export interface AnalysisReport {
   scope: AnalysisScope
@@ -140,8 +127,10 @@ export interface AnalysisReport {
     withJd?: number
   }
   createdAt: string
-  /** 仅 batch 有值：待收录的处方（点「改进」收录进优化点）。 */
-  suggestions: Prescription[]
+  /** 仅 batch 有值：待收录的处方 = change_records 记录（origin=job_analysis、子项 pending）。
+   *  点「改进」= 子项 pending→confirmed（走 /optimization/record/status），进优化点面板已确认栏。
+   *  与优化点是**同一记录的两个视图**——同原因聚合成一条记录多子项（与面板同构）。 */
+  suggestions: ChangeRecord[]
 }
 
 /** 一个求职方向（apply.md §11.2）：role 与 keywords 独立，互不派生。 */
