@@ -19,11 +19,11 @@ from app.services.analysis_daily_stats import compute_daily_stats, render_daily_
 from app.services.analysis_stats import compute_stats, render_stats_summary
 
 # service 装配时注入（避免 nodes import services 循环）。未注入即被调到属装配 bug。
-# prepare_materials(jobs, scope) -> {"facts","round_summary","tone_note"}：喂 analyze 的素材，
-# 含 job51 逐岗 JD 提炼（逐岗 LLM，重活留在 service）。
+# prepare_materials(jobs, scope) -> {"facts","round_summary","tone_note","user_profile"}：
+# 喂 analyze 的素材，含 job51 逐岗 JD 提炼（逐岗 LLM，重活留在 service）+ 用户门槛画像。
 # load_daily(scope_key) -> {"events","as_of","window_days"}：daily 活动素材（service 从 repo 取好）。
 load_jobs_fn: Callable[[int], Awaitable[list[Job]]] | None = None
-prepare_materials_fn: Callable[[list[Job], str], Awaitable[dict[str, str]]] | None = None
+prepare_materials_fn: Callable[[list[Job], str], Awaitable[dict[str, Any]]] | None = None
 persist_fn: Callable[[AnalysisState], Awaitable[None]] | None = None
 load_daily_fn: Callable[[str], Awaitable[dict]] | None = None
 
@@ -65,7 +65,7 @@ async def compute_stats_node(state: AnalysisState) -> Command:
         return Command(update={"daily_stats": daily_stats})
     if not state.jobs:
         return Command(update={})
-    batch_stats = compute_stats(state.jobs)
+    batch_stats = compute_stats(state.jobs, state.user_profile)
     return Command(update={"stats": batch_stats})
 
 
@@ -98,12 +98,11 @@ async def analyze_node(state: AnalysisState) -> Command:
         "with_jd": state.stats.with_jd,
     }
     batch_charts = sum(1 for b in batch_result.blocks if b.kind == "chart")
-    logger.info("analysis_analyzed", scope="batch", charts=batch_charts, prescriptions=len(batch_result.prescriptions))
+    logger.info("analysis_analyzed", scope="batch", charts=batch_charts)
     return Command(
         update={
             "headline": batch_result.headline,
             "blocks": batch_result.blocks,
-            "prescriptions": [p.model_dump() for p in batch_result.prescriptions],
             "meta": meta,
         }
     )

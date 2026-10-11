@@ -53,11 +53,15 @@ class Job(BaseModel):
     last_seen_at: str = ""
     is_new: bool = False  # 本轮刷新新增（增量标记）
     crawl_round_id: int | None = None  # 首触的抓取轮次 id（首触即定，后轮不改）
+    found_by_query: str = ""  # 首触召回它的查询组词（供给分析答「哪组词捞歪了」的原料）
     # 投递跟进当前态（2026-08-30 定稿 + 2026-08-31 派生态）：派生自 job_followup_events
     # 最新一条；无事件 = None = 未处理。interviewing 可能被惰性派生为 interviewed（已面试）。
     followup_status: FollowupStatusDisplay | None = None
     followup_reason: FollowupReason | None = None  # 仅 not_pursuing 有值（不再追踪 tab 原因 chip）
     followup_at: str = ""  # 当前态变更时间（跟进 tab 排序键；未处理时按 last_seen_at 排）
+    # 匹配度（sort=match 时由 repo 现算回填；其它排序为 None）——「契合度」非「成功率」，ADR 0023。
+    match_score: int | None = None  # 0~100 确定性打分
+    match_reason: str = ""  # 一句依据（门槛结论 + 命中契合词），供 UI 悬浮/展示
 
 
 class JobFollowupEvent(BaseModel):

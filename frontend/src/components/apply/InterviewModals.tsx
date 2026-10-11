@@ -91,7 +91,6 @@ export function InterviewDetailModal({
           blocks,
           meta: {},
           createdAt: String(data.created_at ?? ''),
-          suggestions: [],
         })
         // 还在算 → 1.5s 后再拉（与 applyStore 的轮询同节奏）
         if (status === 'computing') window.setTimeout(() => alive && void load(), 1500)

@@ -14,19 +14,25 @@ analyze 用**带工具位的 Agent**（`agents/analysis.py`）。原「不建 gr
 
 三个 scope（§11.7.5）：batch 未处理批次 / daily 已投递日报 / interview 单场面试。
 
-**算一次存一次**：结果落 `analysis_reports`（batch 的处方另落 optimization_pending）；
+**算一次存一次**：结果落 `analysis_reports`——batch/daily 存块流报告、interview 存叙事报告；
 读不到才补算。由 `refresh_*` 入口统一做「有则读、无则算」的门控，避免重复烧 token。
+
+**2026-10-11（ADR 0023）重新定位为「供给分析」**：批次分析只分析爬来的岗位供给本身，
+**不再产出「改简历」的处方**（原 `optimization_pending` / change_records origin=job_analysis
+一条路径已删）——处方大半是技能类、无数据支撑（投递前拿不到 JD）。改进建议仍由聊天 agent
+的 `suggest_improvements` 出，不受影响。
 """
 
 import json
 import time
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
-from app.agents.analysis import BatchAnalysisOut, PrescriptionOut  # noqa: F401 - re-export 兼容既有引用/测试
+from app.agents.analysis import BatchAnalysisOut  # noqa: F401 - re-export 兼容既有引用/测试
 from app.core.errors import EmptyOutputError
 from app.core.logging import logger
 from app.graphs.analysis import run_analysis
@@ -35,15 +41,15 @@ from app.prompts import (
     load_analysis_interview_prompt,
 )
 from app.repositories import analysis as reports_repo
+from app.repositories import documents as docs_repo
 from app.repositories import jobs as jobs_repo
 from app.repositories.facts import list_facts
 from app.schemas.analysis import AnalysisReportOut
-from app.schemas.analysis_graph import AnalysisState
+from app.schemas.analysis_graph import AnalysisState, UserProfile
 from app.schemas.jobs import Job
-from app.schemas.optimization import ChangeRecord
 from app.schemas.report_block import ChartBlock, ReportBlock, TextBlock
+from app.services.analysis_stats import extract_user_profile
 from app.services.llm import llm_service
-from app.services.optimization import _append_or_create_by_reason, list_change_records
 from app.utils.facts import flatten_facts
 
 # 「已投递」日报的观察窗（往回看 N 天，§11.7.5）——趋势/存量看这段，截至本地日。
@@ -102,9 +108,8 @@ async def latest_batch_round_id() -> int | None:
 # ---------------------------------------------------------------------------
 # LLM 结构化输出 schema
 # ---------------------------------------------------------------------------
-# PrescriptionOut / BatchAnalysisOut 已上移 agents/analysis.py（analyze Agent 的产出契约，
-# 含可选 charts），此处保留 import 以兼容既有引用。DistilledJD（逐岗提炼）/ NarrativeOut
-# （日报/面试纯叙事）是本 service 线性路径的产出，仍在此。
+# BatchAnalysisOut / DailyAnalysisOut 已上移 agents/analysis.py（analyze Agent 的产出契约）。
+# DistilledJD（逐岗提炼）/ NarrativeOut（日报/面试纯叙事）是本 service 线性路径的产出，仍在此。
 
 
 class DistilledJD(BaseModel):
@@ -155,11 +160,20 @@ def daily_scope_key() -> str:
 
 
 def _job_line(j: Job) -> str:
-    """一行岗位摘要（标题/公司/城市/薪资/经验/学历 + 标签）。"""
+    """一行岗位摘要（标题/公司/城市/薪资/经验/学历 + 来源查询组）。
+
+    2026-10-11（ADR 0023）删掉 `技能标签` 尾巴：`j.skills` 恒为空（猎聘搜索 API 不返回
+    标签，见 ADR 0019 实测），此尾巴是**死代码**；且提示词抬头写「结构化标签」会让模型
+    以为手里有标签、拿标题脑补。两个谎一并撤掉，模型面前就是它真正拿得到的那几个字段。
+
+    带 `found_by_query`（召回它的检索词组，**首触即定**）：供给分析要答「哪组检索词捞歪了」，
+    必须让模型看得到「每个岗是哪组词捞的」。
+    """
     parts = [p for p in (j.title, j.company, j.city, j.salary_text, j.experience, j.degree) if p]
-    tags = "/".join(j.skills[:8])
-    tail = f"  技能标签：{tags}" if tags else ""
-    return f"- {' | '.join(parts)}{tail}"
+    line = f"- {' | '.join(parts)}"
+    if j.found_by_query:
+        line += f"  〖检索词：{j.found_by_query}〗"
+    return line
 
 
 async def _facts_text() -> str:
@@ -199,23 +213,13 @@ async def _distill_with_jd(jobs: list[Job]) -> list[str]:
     return lines
 
 
-async def _pending_prescriptions() -> list[ChangeRecord]:
-    """该批**未被收录**的处方（origin=job_analysis，子项仍 pending）。
-
-    2026-09-23 起处方也是 change_records：点「改进」= 子项 pending → confirmed，
-    该条自然从本列表消失（分析面板不再展示已被收录的处方）。
-    """
-    records = await list_change_records(origin="job_analysis", active_only=True)
-    return [r for r in records if any(c.status == "pending" for c in r.changes)]
-
-
 async def read_batch(round_id: int) -> AnalysisReportOut | None:
-    """读缓存的批次报告（含该批未收录的处方）；没算过返回 None（§11.7.5 有则读）。"""
+    """读缓存的批次报告；没算过返回 None（§11.7.5 有则读）。"""
     cached = await reports_repo.get_report("batch", str(round_id))
     if cached is None:
         return None
     content, created = cached
-    return _batch_out_from_content(str(round_id), content, created, await _pending_prescriptions())
+    return _batch_out_from_content(str(round_id), content, created)
 
 
 async def batch_has_input(round_id: int) -> bool:
@@ -228,7 +232,7 @@ async def batch_has_input(round_id: int) -> bool:
 
 
 async def summarize_and_analyze_batch(round_id: int, *, force: bool = False) -> AnalysisReportOut | None:
-    """未处理 tab 的批次分析：读本轮那批岗位 → 总览报告 + 处方（落库）。
+    """未处理 tab 的批次分析：读本轮那批岗位 → 总览报告（落库）。
 
     缓存键 = 轮次 id（`scope=batch, scope_key=round_id`）。`force=False` 且已有报告 → 直接读。
     本轮无岗位 → 返回 None（不写空报告；UI 显示"本批暂无岗位"）。
@@ -263,25 +267,27 @@ async def _compute_batch(round_id: int, key: str) -> AnalysisReportOut | None:
         prepare_materials=_prepare_batch_materials,
         persist=_persist_batch,
     )
-    # 处方落库在 persist 里完成；读回该批未收录的处方针随报告返回（一屏两物）。
     return AnalysisReportOut(
         scope="batch",
         scope_key=key,
         headline=state.headline,
         blocks=state.blocks,
         meta=state.meta,
-        suggestions=await _pending_prescriptions(),
     )
 
 
-async def _prepare_batch_materials(jobs: list[Job], scope: str) -> dict[str, str]:
-    """喂 analyze 的素材：facts + 岗位摘要（含 job51 逐岗 JD 提炼，重活留 service）+ 口径注。"""
+async def _prepare_batch_materials(jobs: list[Job], scope: str) -> dict[str, Any]:
+    """喂 analyze 的素材：facts + 岗位摘要（含 job51 逐岗 JD 提炼，重活留 service）+ 口径注 + 用户画像。
+
+    用户门槛画像（年限/学历）从**当前简历成品**（`resume_json`，DB 访问留 service）现算——
+    compute_stats 据此算门槛对表（ADR 0023）。无简历 → None（门槛不做，报告诚实降级）。
+    """
     liepin_jobs = [j for j in jobs if j.source == "liepin"]
     job51_jobs = [j for j in jobs if j.source == "job51"]
 
     sections: list[str] = []
     if liepin_jobs:
-        sections.append("# 猎聘（结构化标签，无 JD）")
+        sections.append("# 猎聘（搜索列表字段，无 JD）")
         sections.extend(_job_line(j) for j in liepin_jobs)
     if job51_jobs:
         sections.append("")
@@ -295,32 +301,28 @@ async def _prepare_batch_materials(jobs: list[Job], scope: str) -> dict[str, str
         f"（本批 {len(jobs)} 个岗位：猎聘 {len(liepin_jobs)} 个为概览（无 JD），"
         f"前程无忧 {len(job51_jobs)} 个中 {with_jd} 个有 JD 可深度分析。）"
     )
-    return {"facts": await _facts_text(), "round_summary": round_summary, "tone_note": tone_note}
+    return {
+        "facts": await _facts_text(),
+        "round_summary": round_summary,
+        "tone_note": tone_note,
+        "user_profile": await _user_profile(),
+    }
+
+
+async def _user_profile() -> UserProfile | None:
+    """用户的门槛画像（从当前简历成品 JSON 现算；无简历 → None）。"""
+    doc = await docs_repo.latest_document()
+    if doc is None:
+        return None
+    return extract_user_profile(doc.resume_json, today=date.today())
 
 
 async def _persist_batch(state: AnalysisState) -> None:
-    """落库：报告（含块流）→ analysis_reports；处方 → change_records（origin=job_analysis）。
+    """落库：报告（含块流）→ analysis_reports。
 
-    处方**按 reason 聚类**落库（与聊天 agent 的 `suggest_improvements` 同一条
-    `_append_or_create_by_reason` 路径）：同一原因的多条处方合进**一条记录多个子项**，
-    不各开一行、不重复抄原因——这样「同一原因聚合」在数据层就成立，与优化点面板完全同构。
+    2026-10-11（ADR 0023）：原「处方 → change_records（origin=job_analysis）」一条路径已删——
+    批次分析不再产处方。落库只剩报告本身。
     """
-    by_reason: dict[str, list[dict]] = {}
-    for p in state.prescriptions:
-        reason = str(p.get("reason", "")).strip() or "投递页分析处方"
-        by_reason.setdefault(reason, []).append(
-            {
-                "target": p.get("target", ""),
-                "original": p.get("original", ""),
-                "suggested": p.get("suggested", ""),
-                "type": p.get("type", "structure"),
-                "severity": p.get("severity", "medium"),
-            }
-        )
-    created = 0
-    for reason, items in by_reason.items():
-        await _append_or_create_by_reason(reason, items, origin="job_analysis")
-        created += len(items)
     content = json.dumps(
         {
             "headline": state.headline,
@@ -330,7 +332,7 @@ async def _persist_batch(state: AnalysisState) -> None:
         ensure_ascii=False,
     )
     await reports_repo.save_report("batch", state.scope_key, content)
-    logger.info("analysis_batch_done", scope_key=state.scope_key, total=state.meta.get("total"), prescriptions=created)
+    logger.info("analysis_batch_done", scope_key=state.scope_key, total=state.meta.get("total"))
 
 
 def _parse_blocks(data: dict) -> list[ReportBlock]:
@@ -359,7 +361,7 @@ def _parse_blocks(data: dict) -> list[ReportBlock]:
     return [TextBlock(md=body)] if body.strip() else []
 
 
-def _batch_out_from_content(key: str, content: str, created: str, suggestions: list) -> AnalysisReportOut:
+def _batch_out_from_content(key: str, content: str, created: str) -> AnalysisReportOut:
     """JSON 文本 → 读模型（缓存命中路径）。块流经 _parse_blocks 兜底（坏块丢、旧 body 兼容）。"""
     data = json.loads(content)
     return AnalysisReportOut(
@@ -369,7 +371,6 @@ def _batch_out_from_content(key: str, content: str, created: str, suggestions: l
         blocks=_parse_blocks(data),
         meta=data.get("meta", {}),
         created_at=created,
-        suggestions=suggestions,
     )
 
 
@@ -457,23 +458,40 @@ async def _persist_daily(state: AnalysisState) -> None:
     logger.info("analysis_daily_done", day=state.scope_key, total_events=len(state.daily_events or []))
 
 
+# 「不再追踪」原因的人话（喂日报素材）。
+_REASON_LABEL: dict[str, str] = {
+    "withdrawn": "主动放弃",
+    "failed": "未通过",
+    "job_closed": "岗位关闭",
+    "duplicate": "重复投递",
+}
+
+
 def _render_daily_summary(events: list, day: str) -> str:
-    """把窗口内投递活动（事件 + 岗位对）渲染成日报素材文本。"""
+    """把窗口内投递活动（事件 + 岗位对）渲染成日报素材文本。
+
+    2026-10-11（ADR 0023）补 `ev.reason`（不再追踪的原因）进素材——§11.4 早说「拒绝理由有
+    研究价值」，旧实现却只按 status 分组、拒因没喂给模型，日报于是讲不了「为什么没成」。
+    """
     if not events:
         return "（最近没有投递活动记录）"
     lines = [f"截至 {day} 的投递活动（往回看 {DAILY_LOOKBACK_DAYS} 天）："]
     by_status: dict[str, list] = {}
     for ev, job in events:
-        by_status.setdefault(ev.status, []).append(job)
+        by_status.setdefault(ev.status, []).append((ev, job))
     label = {
         "applied": "已投递",
         "interviewing": "待面试",
         "offered": "录用",
         "not_pursuing": "不再追踪",
     }
-    for st, js in by_status.items():
-        lines.append(f"\n## {label.get(st, st)}（{len(js)} 个）")
-        lines.extend(_job_line(j) for j in js[:10])
+    for st, pairs in by_status.items():
+        lines.append(f"\n## {label.get(st, st)}（{len(pairs)} 个）")
+        for ev, job in pairs[:10]:
+            line = _job_line(job)
+            if ev.reason:
+                line += f"｜原因：{_REASON_LABEL.get(ev.reason, ev.reason)}"
+            lines.append(line)
     return "\n".join(lines)
 
 

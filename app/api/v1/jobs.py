@@ -28,8 +28,8 @@ from app.services import jobs as service
 
 router = APIRouter()
 
-# 岗位列表筛选参数闭集（ADR 0013：排序只剩单一「时间」维度——time/followup）。
-JobSortParam = Literal["time", "followup"]
+# 岗位列表筛选参数闭集（ADR 0013：时间维度 time/followup；2026-10-11 ADR 0023 加 match 匹配度排序）。
+JobSortParam = Literal["time", "followup", "match"]
 JobOrderParam = Literal["asc", "desc"]
 JobStatusParam = Literal["unprocessed", "applied", "interviewing", "offered", "not_pursuing"]
 FollowupReasonParam = Literal["withdrawn", "failed", "job_closed", "duplicate"]
@@ -47,7 +47,7 @@ async def ingest_jobs(req: JobIngestRequest) -> JobIngestResponse:
 
 @router.get("/jobs", response_model=JobsListResponse)
 async def list_jobs(
-    sort: JobSortParam = Query(default="time", description="排序维度：time / followup"),
+    sort: JobSortParam = Query(default="time", description="排序维度：time / followup / match（匹配度）"),
     order: JobOrderParam = Query(default="desc", description="asc / desc"),
     status: JobStatusParam | None = Query(default=None, description="状态 tab"),
     reason: FollowupReasonParam | None = Query(default=None, description="不再追踪原因（仅 status=not_pursuing 叠加）"),

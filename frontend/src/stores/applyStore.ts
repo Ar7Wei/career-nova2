@@ -3,7 +3,6 @@ import api from '@/lib/api'
 import { useSettingsStore } from '@/stores/settingsStore'
 import type { FollowupReason, FollowupStatus, Interview, InterviewOutcome, Job, JobBrief, JobCounts, JobSort } from '@/types/apply'
 import type { AnalysisReport, AnalysisScope } from '@/types/apply'
-import type { ChangeRecord } from '@/types/resume'
 import { toReportBlocks } from '@/types/report_block'
 import type { ReportBlock } from '@/types/report_block'
 
@@ -93,8 +92,6 @@ interface ApplyState {
   fetchBatchAnalysis: () => Promise<void>
   /** 拉已投递日报（截至昨天）。进页面/切 tab 时调。 */
   fetchDailyAnalysis: () => Promise<void>
-  /** 收录一条处方：子项 pending→confirmed（与面板定论同一端点）。之后从分析面板移除该子项。 */
-  promotePrescription: (recordId: number, changeId: number) => Promise<void>
   setTab: (t: StatusTab) => void
   setReasonFilter: (r: FollowupReason | null) => void
   setSort: (s: JobSort) => void
@@ -209,6 +206,8 @@ function toFrontendJob(j: Record<string, unknown>): Job {
     followupReason: (j.followup_reason ?? null) as Job['followupReason'],
     followupAt: String(j.followup_at ?? ''),
     crawlRoundId: j.crawl_round_id == null ? null : Number(j.crawl_round_id),
+    matchScore: j.match_score == null ? null : Number(j.match_score),
+    matchReason: String(j.match_reason ?? ''),
   }
 }
 
@@ -234,8 +233,6 @@ function toFrontendReport(r: Record<string, unknown>): AnalysisReport {
       withJd: meta.with_jd == null ? undefined : Number(meta.with_jd),
     },
     createdAt: String(r.created_at ?? ''),
-    // 处方 = ChangeRecord（后端本就是新表读模型，字段同名同形，无需转换层）。
-    suggestions: Array.isArray(r.suggestions) ? (r.suggestions as ChangeRecord[]) : [],
   }
 }
 
@@ -325,30 +322,6 @@ export const useApplyStore = create<ApplyState>((set, get) => ({
       }
     } catch {
       // 同上：保留上一份
-    }
-  },
-
-  /** 收录一条处方：子项 pending→confirmed（走 /optimization/record/status，§11.7.7）。
-   *  成功后本地把该子项从分析面板移除——记录内还有其它 pending 子项则只剔该子项，
-   *  全部定论了整条移除（与后端读口 `_pending_prescriptions` 只留仍有 pending 子项的记录一致）。 */
-  promotePrescription: async (recordId, changeId) => {
-    try {
-      await api.post('/v1/optimization/record/status', {
-        record_id: recordId,
-        change_id: changeId,
-        status: 'confirmed',
-      })
-      const batch = get().analysis.batch
-      if (batch) {
-        const next = batch.suggestions
-          .map((r) => ({ ...r, changes: r.changes.filter((c) => c.id !== changeId) }))
-          .filter((r) => r.changes.length > 0)
-        set({ analysis: { ...get().analysis, batch: { ...batch, suggestions: next } } })
-      }
-      // 优化点面板数据在简历页拉，跨页无需同步（同一后端真相源，进页面自然读最新）
-    } catch {
-      // 收录失败：出声（不静默——用户以为收了实际没收）
-      throw new Error('promote_failed')
     }
   },
 

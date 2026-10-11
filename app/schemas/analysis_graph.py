@@ -21,6 +21,50 @@ from app.schemas.report_block import ReportBlock
 AnalysisGraphScope = Literal["batch", "daily"]
 
 
+class UserProfile(BaseModel):
+    """从简历 JSON **现算**出的用户门槛画像（ADR 0023，2026-10-11）。
+
+    门槛对表要比大小，就得先有「用户这一侧的确定值」：总年限（最早工作起始 → 今天）+
+    最高学历。取简历成品（`resume_json`）而非 facts 自由文本——日期/学历是结构化的，
+    能确定性算；facts 是自然语言，算不准。算不出（无简历/坏 JSON）→ `None`，门槛整体不做。
+    """
+
+    years: float | None = None  # 总工作年限（最早一段起始 → 今天，年）
+    years_basis: str = ""  # 年限依据（最早那段：公司/起始年月），可溯源
+    degree: str = ""  # 最高学历（归一后的词，如 硕士/本科/大专）
+    degree_rank: int = 0  # 学历档位（博士4/硕士3/本科2/大专1/其它0）
+    target: str = ""  # 目标岗位（basics.label，作「检索词调整」参照）
+    city: str = ""  # 目标城市（basics.location.city）
+
+
+class GatePack(BaseModel):
+    """用户 × 岗位门槛的确定性对表（ADR 0023，2026-10-11；compute_gate 产出）。
+
+    「你的门槛过几成」——把用户年限/学历与岗位 experience/degree 做**三档对表**：
+    达标（clear）/ 差一点（risky，差 1 年内）/ 明显不够（blocked）。门槛未知（经验不限、
+    学历不限、空、不可解析）**不计入分母**——只对**有明确门槛**的岗说实话，别拿「不限」充数。
+    这一层直接支撑「投递分析」报告的第一段「判词：这批岗你要不要得起」。
+    """
+
+    my_years: float | None = None  # 用户总年限（回带，供 prompt 讲「你几年」）
+    my_degree: str = ""  # 用户最高学历（回带）
+    my_target: str = ""  # 用户目标岗位（basics.label，回带——「这批岗是不是你要的」参照）
+    my_city: str = ""  # 用户期望城市（basics.location.city，回带）
+    # 经验门槛三档（只统计 exp 明确的岗）
+    exp_known: int = 0
+    exp_clear: int = 0
+    exp_risky: int = 0  # 差 1 年内
+    exp_blocked: int = 0
+    # 学历门槛三档（只统计 degree 明确的岗）
+    deg_known: int = 0
+    deg_clear: int = 0
+    deg_risky: int = 0  # 学历门槛若可量化（一般不可）——留位，通常 0
+    deg_blocked: int = 0
+    # 双门槛同时明确、且同时达标的岗数（「直接能投」的核心量）
+    both_known: int = 0
+    both_clear: int = 0
+
+
 class StatsPack(BaseModel):
     """一批岗位的确定性前置统计（compute_stats 产出，喂 analyze Agent）。
 
@@ -28,7 +72,7 @@ class StatsPack(BaseModel):
     """
 
     total: int = 0
-    liepin: int = 0  # 猎聘（结构化标签、无 JD）条数
+    liepin: int = 0  # 猎聘（搜索列表字段、无 JD）条数
     job51: int = 0  # 前程无忧（JD 全文）条数
     with_jd: int = 0  # job51 中 jd_status=fetched 的条数（深度分析覆盖）
     skill_freq: list[DistributionSlice] = Field(default_factory=list)  # 技能词频 top15
@@ -36,6 +80,7 @@ class StatsPack(BaseModel):
     by_degree: list[DistributionSlice] = Field(default_factory=list)
     by_experience: list[DistributionSlice] = Field(default_factory=list)
     salary_buckets: list[DistributionSlice] = Field(default_factory=list)
+    gate: "GatePack | None" = None  # 门槛对表（有用户画像时才算；ADR 0023）
 
 
 class DailyStatsPack(BaseModel):
@@ -60,8 +105,8 @@ class DailyStatsPack(BaseModel):
 class AnalysisState(BaseModel):
     """分析 graph 的流转状态（节点间单向传递，persist 节点读终态落库）。
 
-    scope 分流后：load 填 jobs → compute_stats 填 stats → analyze 填
-    headline/blocks/prescriptions → persist 落库。meta 由 load/compute_stats 累积口径。
+    scope 分流后：load 填 jobs → compute_stats 填 stats → analyze 填 headline/blocks →
+    persist 落库。meta 由 load/compute_stats 累积口径。
     """
 
     scope: AnalysisGraphScope = "batch"
@@ -72,6 +117,7 @@ class AnalysisState(BaseModel):
     facts: str = ""
     round_summary: str = ""
     tone_note: str = ""
+    user_profile: UserProfile | None = None  # 用户门槛画像（prepare 注入；供 compute_stats 算 gate）
     stats: StatsPack | None = None  # batch：岗位画像统计
     daily_stats: DailyStatsPack | None = None  # daily：投递活动统计（与 stats 二者其一）
     # daily 取数素材（service 从 repo 取好喂进 state）：窗口内的跟进事件 + 岗位对。
@@ -80,5 +126,4 @@ class AnalysisState(BaseModel):
     daily_window_days: int = 0  # daily 观察窗天数
     headline: str = ""
     blocks: list[ReportBlock] = Field(default_factory=list)  # 报告正文块流（文/图穿插，analyze 自由配）
-    prescriptions: list[dict[str, Any]] = Field(default_factory=list)  # 待落 optimization_pending
     meta: dict[str, Any] = Field(default_factory=dict)  # 统计口径（前端标注深度/概览）

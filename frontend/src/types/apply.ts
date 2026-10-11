@@ -9,7 +9,6 @@
  */
 
 import type { ReportBlock } from '@/types/report_block'
-import type { ChangeRecord } from '@/types/resume'
 
 /** 岗位来源平台（v1：猎聘主 connector + 前程无忧走 Electron 读 DOM；BOSS/智联已砍 2026-08-31）。 */
 export type JobSource = 'liepin' | 'job51'
@@ -56,6 +55,11 @@ export interface Job {
   followupReason: FollowupReason | null
   /** 当前态变更时间（跟进 tab 排序键）。 */
   followupAt: string
+  /** 匹配度打分（`sort=match` 时后端现算回填；其它排序为 null）。
+   *  「契合度」非「成功率」——门槛达标 + 命中契合词（ADR 0023）。 */
+  matchScore: number | null
+  /** 匹配度依据（门槛结论 + 命中契合词），供行内悬浮展示。 */
+  matchReason: string
   /** 首触的抓取轮次 id（首触即定，后轮不改）——投递页分析取「本轮那批」用。 */
   crawlRoundId: number | null
 }
@@ -97,7 +101,7 @@ export interface JobCounts {
 /** 列表排序方式（ADR 0013：已收敛为单「时间」维度，每 tab 一个语义时间键——
  *  未处理 time = 收录时间 last_seen_at；跟进 followup = 当前态事件 at）。
  *  freshness/relevance 维度已砍 2026-09-08。 */
-export type JobSort = 'time' | 'followup'
+export type JobSort = 'time' | 'followup' | 'match'
 
 /**
  * 投递页分析（apply.md §11.7，2026-09-14）。
@@ -127,10 +131,6 @@ export interface AnalysisReport {
     withJd?: number
   }
   createdAt: string
-  /** 仅 batch 有值：待收录的处方 = change_records 记录（origin=job_analysis、子项 pending）。
-   *  点「改进」= 子项 pending→confirmed（走 /optimization/record/status），进优化点面板已确认栏。
-   *  与优化点是**同一记录的两个视图**——同原因聚合成一条记录多子项（与面板同构）。 */
-  suggestions: ChangeRecord[]
 }
 
 /** 一个求职方向（apply.md §11.2）：role 与 keywords 独立，互不派生。 */

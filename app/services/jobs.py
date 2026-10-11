@@ -4,7 +4,10 @@
 （错误出声），不碰 HTTP。抓取编排（kick/游标/三态）已迁到 app/services/crawl.py。
 """
 
+from datetime import date
+
 from app.core.errors import EpochChangedError, NotFoundError
+from app.repositories import documents as docs_repo
 from app.repositories import jobs as repo
 from app.schemas.jobs import (
     FollowupEventCreate,
@@ -20,6 +23,9 @@ from app.schemas.jobs import (
     JobIngestResponse,
     JobsListResponse,
 )
+from app.services.analysis_stats import extract_user_profile
+from app.services.direction import get_direction
+from app.utils.job_match import match_terms as build_terms
 
 
 async def ingest_jobs(raw_jobs: list[JobIngestItem], data_epoch: int | None = None) -> JobIngestResponse:
@@ -62,9 +68,33 @@ async def list_jobs(
     end: str | None = None,
     crawl_round_id: int | None = None,
 ) -> JobsListResponse:
-    """列岗位列表（跨平台统一列表，含排序/筛选/状态 tab + counts 徽标）。"""
+    """列岗位列表（跨平台统一列表，含排序/筛选/状态 tab + counts 徽标）。
+
+    sort=match（ADR 0023「匹配度排序」）时现算用户画像（当前简历成品）+ 契合词表（方向）
+    传进 repo——repo 只吃「画像对象 + 词表」，不碰简历/方向。
+    """
+    match_profile = None
+    match_terms: tuple[str, ...] = ()
+    if sort == "match":
+        doc = await docs_repo.latest_document()
+        if doc is not None:
+            match_profile = extract_user_profile(doc.resume_json, today=date.today())
+        try:
+            direction = await get_direction()
+        except Exception:  # noqa: BLE001 - 方向读失败不该挡排序（降级成只有画像词）
+            direction = None
+        match_terms = build_terms(direction, match_profile)
+
     jobs = await repo.list_jobs(
-        sort=sort, order=order, status=status, reason=reason, start=start, end=end, crawl_round_id=crawl_round_id
+        sort=sort,
+        order=order,
+        status=status,
+        reason=reason,
+        start=start,
+        end=end,
+        crawl_round_id=crawl_round_id,
+        match_profile=match_profile,
+        match_terms=match_terms,
     )
     counts = await repo.count_jobs()
     return JobsListResponse(jobs=jobs, counts=counts)

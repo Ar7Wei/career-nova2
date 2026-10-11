@@ -22,6 +22,7 @@ from app.core.errors import EpochChangedError
 from app.models.job import Interview, Job, JobFollowupEvent
 from app.repositories.base import async_session_maker
 from app.repositories.settings import get_data_epoch
+from app.schemas.analysis_graph import UserProfile
 from app.schemas.jobs import FollowupEventCreate
 from app.schemas.jobs import InterviewCreate, InterviewUpdate
 from app.schemas.jobs import Interview as InterviewOut
@@ -29,6 +30,7 @@ from app.schemas.jobs import Job as JobOut
 from app.schemas.jobs import JobBrief
 from app.schemas.jobs import JobCounts
 from app.schemas.jobs import JobFollowupEvent as FollowupOut
+from app.utils.job_match import match_score
 
 # 同源去重唯一键（语义唯一 source_name + external_id）由仓库层 upsert 兜底
 # （select-then-insert，非数据库 UNIQUE 约束）；仓库层做 upsert（已存在则更新，不存在则插入）。
@@ -98,6 +100,7 @@ def _to_job(row: Job) -> JobOut:
         last_seen_at=row.last_seen_at.isoformat(),
         is_new=row.is_new,
         crawl_round_id=row.crawl_round_id,
+        found_by_query=row.found_by_query,
     )
 
 
@@ -243,12 +246,16 @@ async def list_jobs(
     start: str | None = None,
     end: str | None = None,
     crawl_round_id: int | None = None,
+    match_profile: UserProfile | None = None,
+    match_terms: tuple[str, ...] = (),
 ) -> list[JobOut]:
     """列岗位列表（跨平台统一列表，含排序/筛选/状态 tab）。
 
     sort（ADR 0013：单一「时间」维度，freshness/relevance/query 已砍 2026-09-08）：
     - time：按 last_seen_at（未处理 tab：收录时间）。
     - followup：跟进 tab 按当前态事件时间。
+    - match（2026-10-11，ADR 0023「匹配度排序」）：按**契合度**确定性打分降序（门槛 + 契合词）。
+      match_profile（用户画像）/ match_terms（契合词表）由 service 算好传入——本层不碰简历/方向。
     - 缺省/未知值 → time。
     status（2026-08-30）：按当前态过滤——unprocessed = 无事件；其余按最新事件 status。
     reason（2026-08-30）：仅配合 status=not_pursuing 用（不再追踪 tab 的原因筛选）。
@@ -301,16 +308,30 @@ async def list_jobs(
             ev = latest.get(_jid(j))
             return ev.at if ev else j.last_seen_at
 
-        def score(j: Job) -> tuple:
-            if sort == "followup":
-                return (followup_at(j).timestamp(),)
-            return (j.last_seen_at.timestamp(),)
+        if sort == "match":
+            # 匹配度排序（ADR 0023）：确定性打分降序。order=asc 看「最不契合」的（少用，但留口）。
+            def match_key(j: Job) -> tuple:
+                out = _to_job(j)
+                s, _, _ = match_score(out, match_profile, match_terms)
+                return (s, j.last_seen_at.timestamp())
 
-        rows.sort(key=score, reverse=(order == "desc"))
+            rows.sort(key=match_key, reverse=(order == "desc"))
+        else:
+
+            def score(j: Job) -> tuple:
+                if sort == "followup":
+                    return (followup_at(j).timestamp(),)
+                return (j.last_seen_at.timestamp(),)
+
+            rows.sort(key=score, reverse=(order == "desc"))
 
         result: list[JobOut] = []
         for j in rows:
             out = _to_job(j)
+            if sort == "match":
+                s, _, reason = match_score(out, match_profile, match_terms)
+                out.match_score = s
+                out.match_reason = reason
             ev = latest.get(_jid(j))
             if ev is not None:
                 out.followup_status = _derive_interviewed(ev, latest_iv.get(_jid(j)), now)  # type: ignore[assignment]

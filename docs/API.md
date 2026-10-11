@@ -135,13 +135,12 @@
 - 响应 `200` `OptimizationDecideResponse`：`{ "result": "改动点 #7.1 已标为 confirmed。" }`。
 - `409`：文档任务（生成/改写/回滚/重置）执行中——撞锁，稍后再操作。
 
-#### 投递页处方「改进」→ `POST /api/v1/optimization/record/status`
-投递页分析面板的「改进」按钮（apply.md §11.7.7）就是上面那个**子项状态迁移**端点——
-处方与分析产出**同落 `change_records`**（`origin=job_analysis`、子项 `pending`），
-点「改进」= 把该子项 `pending → confirmed`（同一记录、不复制新行）。**没有单独的 promote 端点**
-（2026-10-11 删；旧表 `optimization_pending` 随之无任何读写口，待 DROP）。
-- 收录前，未收录的处方**不进优化点面板四栏**（那道「帘子」）；`confirmed` 后才出现在「已确认」栏，可「开始改」。
-- **分析面板与优化点是同一 records 的两个视图**，不是两份数据、不存在"同步"。
+#### 子项状态迁移 → `POST /api/v1/optimization/record/status`
+优化点面板的**子项定论**端点：把某改动记录的某子项迁到 `confirmed` / `rejected` / `discussing` / `pending`。
+`origin=job_analysis` 的一类（历史上由投递页处方产出）**2026-10-11 起已无新产出**（投递分析不再产处方，ADR 0023）——
+但该 `origin` 值、面板读口那道「帘子」（未定论子项不进四栏）与既有数据**保留**：老库里的历史处方仍走此端点定论。
+**没有单独的 promote 端点**（2026-10-11 删；旧表 `optimization_pending` 随之无任何读写口，待 DROP）。
+- 「帘子」：未定论的 `origin=job_analysis` 子项**不进优化点面板四栏**；`confirmed` 后才出现在「已确认」栏，可「开始改」。
 
 > **2026-08-25（§12.6 D8）**：`POST /optimization/decide` 改名 `POST /optimization/update`；`POST /optimization/proposal/confirm`、`POST /optimization/proposal/dismiss` 删除（提议卡 + `propose_suggestion` 工具废除）。`/optimization/update` 已在 2026-09-23 随旧表停用删除。
 > **2026-09-09**：`POST /optimization/apply` 删除——「开始改」折进统一简历图（见下「简历生成」），走 `POST /resume/generate` 的 `apply_confirmed=true`。
@@ -388,7 +387,8 @@
 
 #### `GET /api/v1/jobs`
 读岗位列表（跨平台统一列表）。
-- query 参数（可选）：`sort`（`time`/`followup`）、`order`（`asc`/`desc`）、`status`（状态 tab，见下）、`reason`（仅 `status=not_pursuing` 叠加）、`start`/`end`（日期范围，闭区间，ISO 字符串，按「处理日期」过滤——未处理按 `last_seen_at`、其余按 `followup_at`）。**`source` 平台筛选已删（2026-09-01）**——前端不再提供平台下拉，列表恒全平台；**`sort=freshness/relevance` 与 `query`（检索关键词）已删（2026-09-08）**——排序只剩单一「时间」维度，「相关度」是死维度（前端从不传 `query`）。
+- query 参数（可选）：`sort`（`time`/`followup`/`match`）、`order`（`asc`/`desc`）、`status`（状态 tab，见下）、`reason`（仅 `status=not_pursuing` 叠加）、`start`/`end`（日期范围，闭区间，ISO 字符串，按「处理日期」过滤——未处理按 `last_seen_at`、其余按 `followup_at`）。**`source` 平台筛选已删（2026-09-01）**——前端不再提供平台下拉，列表恒全平台；**`sort=freshness/relevance` 与 `query`（检索关键词）已删（2026-09-08）**——排序只剩「时间」两维。
+  - **`sort=match`（2026-10-11，ADR 0023「匹配度排序」）**：按**契合度**确定性打分降序——门槛（用户年限/学历 vs 岗位 `experience`/`degree`）+ 契合（标题命中目标岗位/方向检索词）。后端现算用户画像（当前简历成品 `resume_json`）+ 契合词表（方向 role/keywords）。**是契合度不是成功率**：只回答「最契合 / 最省事」，没有结果数据、不做「容易中」的预测。命中时每个 job 带回 `match_score`（0~100）与 `match_reason`（门槛结论 + 命中词），供行内展示。
 - 响应 `200` `JobsListResponse`（2026-08-31 加 `counts`）：
   ```json
   {
@@ -497,9 +497,15 @@
 ### 投递 · 分析（阶段二，前缀 `/api/v1`）
 > 2026-09-14（apply.md §11.7 grill 定稿）。投递页的**分析不是"被送达的消息"，是页面的一部分**——
 > 翻到哪个 tab、点开顶部那个分析控件，就看到那个 tab 的分析（**顶部一行控件，不是右栏**）。
-> 三 tab 三套：未处理（适配度 + 改进方向 = **处方**）｜已投递（投递日报 = 嘱咐）｜面试（单场准备，落详情弹窗）；
-> 录用 tab 不做。**算一次存一次**（落 `analysis_reports`），本组端点有则读、无则后台补算返回 `computing`。
+> 三 tab：未处理（**供给分析**——这批岗是不是你要的 / 门槛过几成 / 哪些该扔 / 检索词要不要调）｜
+> 已投递（投递日报）｜面试（单场准备，落详情弹窗）；录用 tab 不做。
+> **算一次存一次**（落 `analysis_reports`），本组端点有则读、无则后台补算返回 `computing`。
 > 设计与理由 → `docs/design/apply.md` §11.7。
+>
+> **2026-10-11 换根（ADR 0023）**：投递分析**只做供给分析，不做简历分析**——答「这批岗是不是你要的」，
+> **不再答「你缺什么技能」**（技能缺口要逐岗 JD，而投递前拿不到；猎聘搜索 API 连技能标签都不返回）。
+> 故批次分析**不再产出「处方」**——`suggestions` 字段已**从响应中移除**（改进建议仍由聊天 agent 的
+> `suggest_improvements` 出、走优化点面板，与本组端点无关）。
 
 #### `GET /api/v1/analysis/unprocessed?round_id=`
 未处理 tab 的批次分析（本轮那批岗位）。**一轮爬完触发**——前端在 `kickCrawl` 尾部调（**不传 `round_id`**）。
@@ -508,21 +514,16 @@
   ```json
   {
     "scope": "batch", "scope_key": "7", "status": "ready",
-    "headline": "这批偏资深前端，普遍要 Vue3 + TypeScript",
+    "headline": "这批 AI 应用岗是你要的，门槛也够得着——但『AI』那组词捞进了一半传统信息化岗",
     "blocks": [
-      { "kind": "text", "md": "这批岗位以资深前端为主，React/Vue 是硬门槛……" },
-      { "kind": "chart", "spec": { "type": "bar", "title": "技能词频",
-        "data": [{"label": "Vue", "count": 8}], "x": "label",
+      { "kind": "text", "md": "**判词**：这批岗整体对你要得起。7 年经验对 3-5 年门槛的岗有富余……" },
+      { "kind": "chart", "spec": { "type": "bar", "title": "城市分布",
+        "data": [{"label": "成都-高新区", "count": 27}], "x": "label",
         "series": [{"key": "count"}], "orientation": "vertical", "note": "仅猎聘样本" } },
-      { "kind": "text", "md": "学历上硕士占大头，你差在……" }
+      { "kind": "text", "md": "**提案**：『AI』那组词捞进一堆传统信息化岗，改成『大模型应用』……" }
     ],
     "meta": { "total": 12, "liepin": 8, "job51": 4, "with_jd": 4 },
-    "created_at": "2026-09-14T02:11:03+00:00",
-    "suggestions": [
-      { "id": 31, "type": "fill_gap", "target": "岗位：某公司·资深前端", "original": "",
-        "suggested": "补一个 LangGraph 项目经历", "reason": "本批 3 家要求 LangGraph",
-        "severity": "high", "status": "proposed", "origin": "job_analysis" }
-    ]
+    "created_at": "2026-09-14T02:11:03+00:00"
   }
   ```
   - `status`：`ready`（有缓存）/ `computing`（正在算，**前端轮询**）/ `missing`（本轮无岗位，没东西可算）。
@@ -534,17 +535,18 @@
     坏块（kind 不认得 / chart 配错）单独丢、text 照显。**兼容旧缓存**：无 `blocks` 只有 `body` 时折成单个 text 块。
   - `meta`：统计口径——`total` 本批岗位数 / `liepin`·`job51` 来源分布 / `with_jd` 有 JD 数
     （前端据此标注"深度分析（有 JD）vs 概览（无 JD）"，不让用户以为覆盖不全都一样深）。
-  - `suggestions`：**待收录的处方**——`change_records` 记录（`origin=job_analysis`、子项仍 `pending`）的数组，
-    每条**同原因聚成一条记录多子项**（与优化点面板同构）。收录前**不进优化点面板四栏**（那道「帘子」）；
-    点「改进」= 该子项 `pending → confirmed`，走 `POST /optimization/record/status`（**同一记录、不复制新行**）
-    → 进优化点面板「已确认」栏，可「开始改」。
+  - **报告脊柱（2026-10-11）**：判词（这批岗要不要得起 / 词捞歪没）→ 门槛（**你的门槛过几成**，
+    确定性对表 `StatsPack.gate`：经验/学历达标·差一点·明显不够 + 双门槛都达标数）→ 你的牌/风险（薪资/城市/学历）
+    → 提案（可执行的一两件事：剔除偏岗 / 收紧检索词 / 调期望）。**无提案也合法**（这批没问题就说"直接投"）。
+  - **门槛对表**：用户年限/学历从**当前简历成品**（`resume_json`）现算（最早工作 → 今天 + 最高学历），
+    与岗位 `experience`/`degree` 做三档对表；门槛「不限/未注明/解析不出」的岗**不计入分母**。
   - **2026-09-15 graph 化**：batch 走 `graphs/analysis.py`（load → prepare → compute_stats → analyze →
     persist），analyze 用带工具位的 Agent（详见 apply.md §11.7.6）。两种数据源两种分析法不变：猎聘
-    （无 JD、结构化标签）代码聚合；前程无忧（有 JD）逐岗读 JD 提炼（留在 service prepare 阶段）。
+    （无 JD、扫描列表字段）代码聚合；前程无忧（有 JD）逐岗读 JD 提炼（留在 service prepare 阶段）。
 
 #### `GET /api/v1/analysis/applied`
 已投递 tab 的投递日报。**进页面触发**（后端按本地日 "截至昨天" 的缓存键）。
-- 响应 `200` `AnalysisReportOut`（`scope=daily`，**无 suggestions**——日报是纯**嘱咐**，不是简历改动清单）。
+- 响应 `200` `AnalysisReportOut`（`scope=daily`）。
 - `scope_key` = 本地日的昨天（`YYYY-MM-DD`，UTC+8）——报告是日期的纯函数，同一日期永只算一份、永不需复算。
 - **2026-09-15 graph 化**：与 batch 同构——走 `graphs/analysis.py`，取数 = 观察窗（往回 14 天）内的
   投递活动（`job_followup_events` 事件 + 岗位对），前置统计用代码算（`compute_daily_stats` →

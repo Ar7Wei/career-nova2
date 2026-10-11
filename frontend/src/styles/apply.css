@@ -119,6 +119,16 @@
   color: var(--color-muted);
 }
 
+/* 匹配度排序开关（ADR 0023，仅未处理 tab）：按下 = 主色淡底 + 主色字，表明当前排序维度。 */
+.apply-match-toggle {
+  flex: none;
+  color: var(--color-muted);
+}
+.apply-match-toggle.is-on {
+  color: var(--primary-color);
+  background: color-mix(in srgb, var(--primary-color) 12%, transparent);
+}
+
 /* 刷新结果反馈 */
 .apply-refresh-result {
   flex: none;
@@ -1281,18 +1291,22 @@
   padding: var(--space-3) 0;
 }
 
-/* 报告：一句话结论 + 正文 */
+/* 报告：一句话结论（判词）+ 正文。
+   headline 是「这批岗你要不要得起」的判词——比正文重一档、左侧主色描边点题。 */
 .analysis-headline {
   font-size: var(--font-size-title);
   font-weight: var(--font-weight-semibold);
   color: var(--color-ink);
   line-height: var(--line-height-normal);
+  padding-left: var(--space-3);
+  border-left: 3px solid var(--primary-color);
 }
+/* text 块：走全局 .md-body（行内强调/列表/小标题正确排版）；此处只定基础字号色。
+   2026-10-11：去掉旧版的 white-space:pre-wrap——markdown 段落下再保留换行会双倍留白。 */
 .analysis-text {
   font-size: var(--font-size-lg);
   color: var(--color-ink);
   line-height: var(--line-height-relaxed);
-  white-space: pre-wrap;
   word-break: break-word;
 }
 .analysis-meta {
@@ -1314,18 +1328,6 @@
   font-size: var(--font-size-xs);
   color: var(--color-muted);
   margin-top: var(--space-2);
-}
-
-/* 处方区：标题 + 一列建议卡（复用 SuggestionCard，动作区注入「改进」） */
-.analysis-prescriptions {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.analysis-prescriptions-title {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-muted);
 }
 
 /* 面试详情弹窗内的单场准备（原 iv-detail-ai 虚线占位升级为真实内容） */

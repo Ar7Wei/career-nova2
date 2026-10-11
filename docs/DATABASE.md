@@ -171,7 +171,7 @@
 | `changes` | TEXT(JSON) | **改动点（改什么）**：`[{id, target, original, suggested, status, type, severity}]`，**可空数组**（原因先行、子项后补）；子项 **id 记录内唯一 + 自带 status**（操作粒度 = 单条子项）；`type`/`severity` 供面板展示改哪类、多要紧 |
 | `status` | TEXT（index） | 记录级兜底状态（子项全空时 / 整条存废）：pending/discussing/.../archived |
 | `kind` | TEXT（index） | `change` 本轮整改（用完即随版本结清）/ `decision` **跨版本持续决策**（每版注入生成/改写 prompt） |
-| `origin` | TEXT（index） | `agent`（聊天 agent 提的）/ `job_analysis`（投递页分析产的处方） |
+| `origin` | TEXT（index） | `agent`（聊天 agent 提的）/ `job_analysis`（**历史**：投递页处方产；2026-10-11 起无新产出，ADR 0023——值保留、老数据仍走帘子与定论端点） |
 | `session_id` | INTEGER（index） | 提出会话 |
 | `document_id` | INTEGER（index） | 基于哪版 |
 | `resolved_in_document_id` | INTEGER（index，可空） | 哪版被结清；NULL=活跃 |
@@ -331,13 +331,13 @@
 | `created_at` | DATETIME | 生成时间 |
 
 设计要点：
-- **`content` 只装嘱咐，不装处方**：报告叙事（总览/日报/面试 tips）在这里；**处方**是 `change_records` 里 `origin=job_analysis`、子项仍 `pending` 的记录（**同原因聚成一条记录多子项**，与优化点面板同构）。一份报告 + 一列处方 = "一屏两物"，不是"一物两存"。收录前这些处方**不进优化点面板四栏**（面板读口的「帘子」），点「改进」= 子项 `pending → confirmed`（走 `/optimization/record/status`，同一记录不复制新行）才进「已确认」栏。
+- **`content` 只装报告，不装处方（2026-10-11 起）**：报告叙事（供给分析/日报/面试 tips）在这里。**投递分析不再产处方**（ADR 0023：投递分析只做供给分析，不答「你缺什么技能」——技能缺口要逐岗 JD、投递前拿不到）。改进建议仍由聊天 agent 的 `suggest_improvements` 出、落 `change_records`（`origin=agent`），与本表无关。
 - **`blocks`（2026-09-15 文/图穿插）**：`batch`/`daily` 报告的 content 带 `blocks: list[ReportBlock]`——analyze Agent 按叙述顺序产出的 `text`/`chart` 块（**图穿插在段落之间**，0~4 张、宁缺勿滥）。`ReportBlock` 契约见 `app/schemas/report_block.py`（text=Markdown 段 / chart 内嵌 `ChartSpec`，后者见 `app/schemas/chart.py`：6 种图型、series ≤ 2、字段须在 data 内）。读缓存时逐块校验（`_parse_blocks`），坏块（kind 不认得 / chart spec 配错）丢弃降级、不拖垮整份；**兼容旧缓存**——无 `blocks` 只有 `body` 时折成单个 text 块。前端另有 `toReportBlocks` + `isChartSpec` 兜底。
 - **不存"未就绪"行**：算完才写；读不到 = 该 scope 还没算过，由 `GET /analysis/*` 补算（起后台任务返回 `computing`，前端轮询）。
 - **`batch` 的 scope_key = 轮次 id**——分析输入 = **本轮抓到的那批**（检索条件会改、轮次间不可比，§11.7 grill 定）。无岗位的轮次 → 路由返回 `missing`，不起任务、不写报告。
 - **`daily` 的 scope_key = 本地日的昨天**——报告是**日期的纯函数**（"截至昨天"，§11.7.5），同一日期永只算一份、永不需复算。**坑**：代码全 UTC，而"今天"是本地日（UTC+8）——按 UTC 算会把今天投的岗算进昨天。
 - **`interview` 的 scope_key = 场次 id**——展开该场次时算。
-- **两种数据源两种分析法**（`batch`）：猎聘（无 JD、结构化标签）代码聚合标签；前程无忧（有 JD）逐岗读 JD 提炼。`meta.with_jd` 供前端标注"深度/概览"。**2026-09-15 graph 化**：batch 改走 `graphs/analysis.py`（load → prepare → compute_stats → analyze → persist），analyze 用带工具位的 Agent，详见 apply.md §11.7.6。
+- **两种数据源两种分析法**（`batch`）：猎聘（无 JD、扫描列表字段）代码聚合；前程无忧（有 JD）逐岗读 JD 提炼。`meta.with_jd` 供前端标注"深度/概览"。**2026-09-15 graph 化**：batch 改走 `graphs/analysis.py`（load → prepare → compute_stats → analyze → persist），analyze 用带工具位的 Agent，详见 apply.md §11.7.6。**2026-10-11**：`prepare` 现算用户门槛画像（从当前简历成品的 `resume_json`）注入 `compute_stats`，报告据 `StatsPack.gate` 讲「你的门槛过几成」。
 - **核爆随 reset 清空**（派生缓存，不继承）。
 
 ## 配置三真相源（别搞混）

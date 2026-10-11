@@ -14,24 +14,16 @@ from pydantic import BaseModel, Field
 from app.core.errors import EmptyOutputError
 from app.core.logging import logger
 from app.prompts import load_analysis_batch_prompt, load_analysis_daily_prompt
-from app.schemas.optimization import Severity, SuggestionType
 from app.schemas.report_block import ReportBlock
 from app.services.llm import llm_service
 
 
-class PrescriptionOut(BaseModel):
-    """一条处方（LLM 产出 → 落 optimization_pending，status=proposed）。"""
-
-    type: SuggestionType
-    target: str = ""
-    original: str = ""
-    suggested: str = ""
-    reason: str = ""
-    severity: Severity = "medium"
-
-
 class BatchAnalysisOut(BaseModel):
-    """未处理批次分析的 Agent 产出：总览报告（块流）+ 处方。
+    """未处理批次分析的 Agent 产出：总览报告（块流）。
+
+    2026-10-11（ADR 0023）**砍掉 prescriptions**：投递分析在上游、只分析爬来的岗位供给，
+    不再产出「改简历」的处方（技能缺口类处方无数据支撑，会一路污染进简历）。改进建议仍由
+    聊天 agent 的 `suggest_improvements` 产出，不受影响。批次分析只出「报告」+（后续）「投递提案」。
 
     blocks = 报告正文的**有序块流**（text / chart 穿插）：Agent 按叙述顺序产出，图自然
     嵌在段落之间。图表 0~4 张、宁缺勿滥：从给定统计里挑数据配，只许 6 种图型、series ≤ 2、
@@ -40,7 +32,6 @@ class BatchAnalysisOut(BaseModel):
 
     headline: str = ""
     blocks: list[ReportBlock] = Field(default_factory=list)
-    prescriptions: list[PrescriptionOut] = Field(default_factory=list)
 
 
 async def run_batch_analysis_agent(
@@ -50,10 +41,10 @@ async def run_batch_analysis_agent(
     tone_note: str,
     stats_summary: str,
 ) -> BatchAnalysisOut:
-    """综合一批岗位：前置统计 + 岗位素材 → 总览报告 + 处方 + 可选配图。
+    """综合一批岗位：前置统计 + 岗位素材 → 总览报告 + 可选配图。
 
     素材由调用方（node）备好：stats_summary = compute_stats 的统计文本、round_summary =
-    岗位/标签/JD 摘要。坏答案（整份空）→ EmptyOutputError。
+    岗位摘要。坏答案（整份空）→ EmptyOutputError。
     """
     prompt = load_analysis_batch_prompt(
         facts=facts, round_summary=round_summary, tone_note=tone_note, stats_summary=stats_summary
@@ -62,15 +53,15 @@ async def run_batch_analysis_agent(
     if not (result.headline.strip() or any(b.kind == "text" and b.md.strip() for b in result.blocks)):
         raise EmptyOutputError("批次分析产出空报告")
     charts = sum(1 for b in result.blocks if b.kind == "chart")
-    logger.info("analysis_batch_agent_done", charts=charts, prescriptions=len(result.prescriptions))
+    logger.info("analysis_batch_agent_done", charts=charts)
     return result
 
 
 class DailyAnalysisOut(BaseModel):
-    """已投递日报的 Agent 产出：块流正文 + **可选配图**（无处方——日报只讲嘱咐）。
+    """已投递日报的 Agent 产出：块流正文 + **可选配图**。
 
-    与 batch 的差别只在**没有 prescriptions**：日报是回望和洞察，不是简历改动清单（§11.7 grill 定）。
-    blocks 同 batch——按叙述顺序产出的 text/chart 块（图表 0~4 张、宁缺勿滥）。
+    日报是回望和洞察，不是简历改动清单。blocks 同 batch——按叙述顺序产出的 text/chart 块
+    （图表 0~4 张、宁缺勿滥）。
     """
 
     headline: str = ""
