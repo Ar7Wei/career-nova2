@@ -96,8 +96,10 @@ export function injectScale(html: string, typography: Typography, pageZoom: numb
 
 /** 一页剪切线的文档 Y（恒定一条，见模块头注释）。
     保留「接受内容高度」的参数形状，但**恒返回一条**——简历只做一页，线下内容导出时被截掉。
-    签名保留 `contentHeightDoc` 仅为向后兼容既有调用/测试；不再随内容高度增减条数。 */
-export function pageGuideOffsets(_contentHeightDoc: number): number[] {
+    签名保留 `contentHeightDoc` 仅为向后兼容既有调用/测试；不再随内容高度增减条数。
+    `void contentHeightDoc`：显式弃用参数（本仓 eslint 不认下划线前缀），零开销、行为不变。 */
+export function pageGuideOffsets(contentHeightDoc: number): number[] {
+  void contentHeightDoc
   return [A4_HEIGHT_PX]
 }
 
